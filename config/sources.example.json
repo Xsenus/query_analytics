@@ -1,0 +1,23 @@
+[
+  {
+    "id": "garage-sync",
+    "name": "ABCP B24 Garage Sync",
+    "rootPath": "/opt/abcp-b24-garage-sync",
+    "include": ["logs/http-requests-*.jsonl"],
+    "format": "garage-jsonl"
+  },
+  {
+    "id": "abcp-b24-sync",
+    "name": "ABCP B24 Sync",
+    "rootPath": "/opt/abcp_b24_sync",
+    "include": ["logs/http_requests/request_analytics_*.log"],
+    "format": "request-analytics"
+  },
+  {
+    "id": "abcp2bitrix",
+    "name": "ABCP2Bitrix",
+    "rootPath": "/opt/ABCP2Bitrix",
+    "include": ["ABCP2Bitrix.Infrastructure/logs/http-analytics/http-requests-*.jsonl"],
+    "format": "dotnet-jsonl"
+  }
+]

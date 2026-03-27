@@ -1,0 +1,16 @@
+[Unit]
+Description=Query Analytics Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/query-analytics
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/query-analytics/dist/server/server/index.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
