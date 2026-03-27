@@ -44,7 +44,14 @@ export interface DashboardPayload {
     sources: Array<{ key: string; count: number; positive: number; negative: number }>;
     outcomes: Array<{ key: string; count: number }>;
     statusCodes: Array<{ key: string; count: number }>;
-    endpoints: Array<{ key: string; count: number; positive: number; negative: number; avgDurationMs: number | null }>;
+    endpoints: Array<{
+      key: string;
+      count: number;
+      positive: number;
+      negative: number;
+      avgDurationMs: number | null;
+      platforms: Array<{ key: string; count: number }>;
+    }>;
     hours: Array<{ key: string; total: number; positive: number; negative: number }>;
   };
   tables: {

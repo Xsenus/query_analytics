@@ -731,12 +731,17 @@ export default function App() {
             {endpointData.map((item) => {
               const share = Math.round((item.count / endpointMaxCount) * 100);
               const successRate = item.count === 0 ? 0 : Math.round((item.positive / item.count) * 100);
+              const platformText =
+                item.platforms.length === 0
+                  ? "Платформа не определена"
+                  : item.platforms.map((platform) => `${getProviderLabel(platform.key)} (${formatNumber(platform.count)})`).join(" • ");
 
               return (
                 <article key={item.key} className="endpoint-card">
                   <div className="endpoint-main">
                     <div>
                       <h3>{item.key}</h3>
+                      <p className="endpoint-platforms">Платформы: {platformText}</p>
                       <p>
                         Всего: {formatNumber(item.count)} • Успешно: {formatNumber(item.positive)} • С ошибкой:{" "}
                         {formatNumber(item.negative)}

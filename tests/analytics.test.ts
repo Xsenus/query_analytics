@@ -164,5 +164,9 @@ describe("buildDashboardPayload", () => {
     expect(payload.tables.recentRequests.items[0]?.gapSincePreviousMs).toBe(3600000);
     expect(payload.tables.recentRequests.items[1]?.gapSincePreviousMs).toBeNull();
     expect(payload.options.providers[0]?.value).toBe("BITRIX");
+    expect(payload.charts.endpoints.find((item) => item.key === "GET order")?.platforms).toEqual([{ key: "ABCP", count: 1 }]);
+    expect(payload.charts.endpoints.find((item) => item.key === "POST crm.deal.update")?.platforms).toEqual([
+      { key: "BITRIX", count: 1 },
+    ]);
   });
 });

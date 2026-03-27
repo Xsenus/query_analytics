@@ -130,7 +130,17 @@ export function buildDashboardPayload(
   const timeline = new Map<string, { total: number; positive: number; negative: number; unknown: number }>();
   const providerMap = new Map<string, { count: number; positive: number; negative: number }>();
   const sourceMap = new Map<string, { count: number; positive: number; negative: number }>();
-  const endpointMap = new Map<string, { count: number; positive: number; negative: number; durationTotal: number; durationCount: number }>();
+  const endpointMap = new Map<
+    string,
+    {
+      count: number;
+      positive: number;
+      negative: number;
+      durationTotal: number;
+      durationCount: number;
+      platforms: Map<string, number>;
+    }
+  >();
   const hourMap = new Map<string, { total: number; positive: number; negative: number }>();
 
   for (let hour = 0; hour < 24; hour += 1) {
@@ -170,6 +180,7 @@ export function buildDashboardPayload(
       negative: 0,
       durationTotal: 0,
       durationCount: 0,
+      platforms: new Map<string, number>(),
     };
     endpointRow.count += 1;
     if (entry.result === "positive") {
@@ -182,6 +193,7 @@ export function buildDashboardPayload(
       endpointRow.durationTotal += entry.durationMs;
       endpointRow.durationCount += 1;
     }
+    endpointRow.platforms.set(entry.provider, (endpointRow.platforms.get(entry.provider) ?? 0) + 1);
     endpointMap.set(entry.endpoint, endpointRow);
 
     const hourKey = entry.timestamp.slice(11, 13);
@@ -282,6 +294,9 @@ export function buildDashboardPayload(
           positive: values.positive,
           negative: values.negative,
           avgDurationMs: values.durationCount === 0 ? null : round(values.durationTotal / values.durationCount),
+          platforms: [...values.platforms.entries()]
+            .map(([platformKey, count]) => ({ key: platformKey, count }))
+            .sort((left, right) => right.count - left.count || left.key.localeCompare(right.key)),
         }))
         .sort((left, right) => right.count - left.count)
         .slice(0, 12),

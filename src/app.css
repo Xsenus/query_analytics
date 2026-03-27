@@ -466,6 +466,13 @@ button {
   font-size: 1rem;
 }
 
+.endpoint-platforms {
+  margin: 0 0 6px;
+  color: #155e75;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .endpoint-main p,
 .endpoint-foot {
   margin: 0;
