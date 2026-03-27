@@ -22,7 +22,6 @@ type RangePreset = "24h" | "7d" | "30d" | "90d";
 type RecentRequest = DashboardPayload["tables"]["recentRequests"]["items"][number];
 
 const numberFormat = new Intl.NumberFormat("ru-RU");
-const dateTimeFormat = new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short" });
 const presetLabels: Record<RangePreset, string> = { "24h": "24 часа", "7d": "7 дней", "30d": "30 дней", "90d": "90 дней" };
 const resultLabels: Record<string, string> = { positive: "Успешно", negative: "С ошибкой", unknown: "Не определено", total: "Всего" };
 const outcomeLabels: Record<string, string> = {
@@ -46,7 +45,7 @@ function pad(value: number): string {
 }
 
 function toInputValue(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function presetToRange(preset: RangePreset): { from: string; to: string } {
@@ -67,13 +66,41 @@ function round(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function formatDuration(value: number | null): string {
+function formatTimeSpan(value: number | null): string {
   if (value === null) return "—";
-  return value >= 1000 ? `${round(value / 1000)} с` : `${round(value)} мс`;
+  if (value < 1000) return `${round(value)} мс`;
+
+  const seconds = value / 1000;
+  if (seconds < 60) return `${round(seconds)} с`;
+
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${round(minutes)} мин`;
+
+  const hours = minutes / 60;
+  if (hours < 24) return `${round(hours)} ч`;
+
+  return `${round(hours / 24)} дн`;
+}
+
+function formatDuration(value: number | null): string {
+  return formatTimeSpan(value);
+}
+
+function formatInterval(value: number | null): string {
+  return formatTimeSpan(value);
 }
 
 function formatDateTime(value: string | null): string {
-  return value ? dateTimeFormat.format(new Date(value)) : "—";
+  if (!value) {
+    return "—";
+  }
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return "—";
+  }
+
+  return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} (${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())})`;
 }
 
 function normalizeEscapedFallback(value: string): string {
@@ -164,6 +191,14 @@ function getStatusLabel(value: string): string {
 
 function getIntervalLabel(value: string): string {
   return intervalLabels[value] ?? value;
+}
+
+function isOutcomeRedundant(result: string, outcome: string): boolean {
+  return (
+    (result === "positive" && (outcome === "positive" || outcome === "success")) ||
+    (result === "negative" && outcome === "negative") ||
+    (result === "unknown" && outcome === "unknown")
+  );
 }
 
 function toneClass(value: string): string {
@@ -379,6 +414,7 @@ export default function App() {
   const responseFullText = formatPreview(requestDetails?.responseBody ?? requestDetails?.responsePreview ?? selectedRequest?.responsePreview ?? null);
   const canShowFullRequest = Boolean(requestDetails?.requestBody);
   const canShowFullResponse = Boolean(requestDetails?.responseBody);
+  const selectedRequestHasDistinctOutcome = selectedRequest ? !isOutcomeRedundant(selectedRequest.result, selectedRequest.outcome) : false;
 
   return (
     <main className="shell">
@@ -440,12 +476,12 @@ export default function App() {
         <div className="filters-grid">
           <label>
             <span>От</span>
-            <input type="datetime-local" value={range.from} onChange={(event) => handleRangeChange("from", event.target.value)} />
+            <input type="datetime-local" step={1} value={range.from} onChange={(event) => handleRangeChange("from", event.target.value)} />
           </label>
 
           <label>
             <span>До</span>
-            <input type="datetime-local" value={range.to} onChange={(event) => handleRangeChange("to", event.target.value)} />
+            <input type="datetime-local" step={1} value={range.to} onChange={(event) => handleRangeChange("to", event.target.value)} />
           </label>
 
           <label>
@@ -541,6 +577,11 @@ export default function App() {
           label="Максимальная длительность"
           value={formatDuration(dashboard?.summary.maxDurationMs ?? null)}
           note={`Endpoint'ов: ${formatNumber(dashboard?.summary.uniqueEndpoints ?? 0)}`}
+        />
+        <MetricCard
+          label="Средний интервал"
+          value={formatInterval(dashboard?.summary.avgGapMs ?? null)}
+          note={`P95: ${formatInterval(dashboard?.summary.p95GapMs ?? null)} • Макс: ${formatInterval(dashboard?.summary.maxGapMs ?? null)}`}
         />
         <MetricCard
           label="Последний запрос"
@@ -791,6 +832,7 @@ export default function App() {
                     <th>Результат</th>
                     <th>HTTP</th>
                     <th>Длительность</th>
+                    <th>Интервал</th>
                     <th />
                   </tr>
                 </thead>
@@ -806,11 +848,14 @@ export default function App() {
                       <td>
                         <div className="request-result">
                           <span className={`pill ${toneClass(item.result)}`}>{getResultLabel(item.result)}</span>
-                          <span className={`pill ${toneClass(item.outcome)}`}>{getOutcomeLabel(item.outcome)}</span>
+                          {!isOutcomeRedundant(item.result, item.outcome) ? (
+                            <span className={`pill ${toneClass(item.outcome)}`}>{getOutcomeLabel(item.outcome)}</span>
+                          ) : null}
                         </div>
                       </td>
                       <td>{item.statusCode ?? "—"}</td>
                       <td>{formatDuration(item.durationMs)}</td>
+                      <td>{formatInterval(item.gapSincePreviousMs)}</td>
                       <td>
                         <button
                           type="button"
@@ -905,13 +950,19 @@ export default function App() {
                 <span className="details-label">Результат</span>
                 <strong>{getResultLabel(selectedRequest.result)}</strong>
               </div>
-              <div className="modal-meta">
-                <span className="details-label">Исход</span>
-                <strong>{getOutcomeLabel(selectedRequest.outcome)}</strong>
-              </div>
+              {selectedRequestHasDistinctOutcome ? (
+                <div className="modal-meta">
+                  <span className="details-label">Исход</span>
+                  <strong>{getOutcomeLabel(selectedRequest.outcome)}</strong>
+                </div>
+              ) : null}
               <div className="modal-meta">
                 <span className="details-label">Длительность</span>
                 <strong>{formatDuration(selectedRequest.durationMs)}</strong>
+              </div>
+              <div className="modal-meta">
+                <span className="details-label">Интервал до прошлого</span>
+                <strong>{formatInterval(selectedRequest.gapSincePreviousMs)}</strong>
               </div>
               <div className="modal-meta modal-meta-wide">
                 <span className="details-label">URL</span>

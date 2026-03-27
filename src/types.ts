@@ -31,6 +31,9 @@ export interface DashboardPayload {
     avgDurationMs: number | null;
     p95DurationMs: number | null;
     maxDurationMs: number | null;
+    avgGapMs: number | null;
+    p95GapMs: number | null;
+    maxGapMs: number | null;
     uniqueEndpoints: number;
     uniqueProviders: number;
     latestTimestamp: string | null;
@@ -71,6 +74,7 @@ export interface DashboardPayload {
         outcome: string;
         statusCode: number | null;
         durationMs: number | null;
+        gapSincePreviousMs: number | null;
         error: string | null;
         url: string | null;
         requestPreview: string | null;

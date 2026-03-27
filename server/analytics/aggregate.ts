@@ -122,6 +122,10 @@ export function buildDashboardPayload(
   const durations = filteredEntries
     .map((entry) => entry.durationMs)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gaps = filteredEntries
+    .slice(0, -1)
+    .map((entry, index) => Math.max(0, entry.unixMs - filteredEntries[index + 1]!.unixMs))
+    .filter((value) => Number.isFinite(value));
 
   const timeline = new Map<string, { total: number; positive: number; negative: number; unknown: number }>();
   const providerMap = new Map<string, { count: number; positive: number; negative: number }>();
@@ -243,6 +247,9 @@ export function buildDashboardPayload(
       avgDurationMs: durations.length === 0 ? null : round(durations.reduce((sum, value) => sum + value, 0) / durations.length),
       p95DurationMs: percentile(durations, 0.95),
       maxDurationMs: durations.length === 0 ? null : round(Math.max(...durations)),
+      avgGapMs: gaps.length === 0 ? null : round(gaps.reduce((sum, value) => sum + value, 0) / gaps.length),
+      p95GapMs: percentile(gaps, 0.95),
+      maxGapMs: gaps.length === 0 ? null : round(Math.max(...gaps)),
       uniqueEndpoints: new Set(filteredEntries.map((entry) => entry.endpoint)).size,
       uniqueProviders: new Set(filteredEntries.map((entry) => entry.provider)).size,
       latestTimestamp: filteredEntries[0]?.timestamp ?? null,
@@ -296,7 +303,7 @@ export function buildDashboardPayload(
         pageSize,
         total: filteredEntries.length,
         totalPages,
-        items: recentItems.map((entry) => ({
+        items: recentItems.map((entry, localIndex) => ({
           id: entry.id,
           timestamp: entry.timestamp,
           sourceName: entry.sourceName,
@@ -307,6 +314,10 @@ export function buildDashboardPayload(
           outcome: entry.outcome,
           statusCode: entry.statusCode,
           durationMs: entry.durationMs,
+          gapSincePreviousMs:
+            pageStart + localIndex < filteredEntries.length - 1
+              ? Math.max(0, entry.unixMs - filteredEntries[pageStart + localIndex + 1]!.unixMs)
+              : null,
           error: entry.error,
           url: entry.url,
           requestPreview: entry.requestPreview,

@@ -312,7 +312,7 @@ button {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -572,7 +572,7 @@ button {
 .requests-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1100px;
+  min-width: 1240px;
 }
 
 .requests-table th,

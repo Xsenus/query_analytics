@@ -122,6 +122,47 @@ function normalizeResult(value: unknown, fallback: "positive" | "negative" | "un
   return fallback;
 }
 
+function normalizeOutcome(
+  value: unknown,
+  result: "positive" | "negative" | "unknown",
+  fallbackStatusCode: number | null = null,
+): string {
+  const normalized = asString(value)
+    ?.toLowerCase()
+    .replace(/[\s-]+/g, "_");
+
+  switch (normalized) {
+    case undefined:
+    case null:
+      return result === "positive" ? "success" : result;
+    case "positive":
+    case "success":
+    case "ok":
+      return "success";
+    case "negative":
+      return fallbackStatusCode !== null && fallbackStatusCode >= 400 ? "http_error" : "negative";
+    case "http":
+    case "http_error":
+      return "http_error";
+    case "application_error":
+    case "app_error":
+      return "application_error";
+    case "empty":
+    case "empty_response":
+      return "empty";
+    case "exception":
+    case "exception_error":
+      return "exception";
+    case "canceled":
+    case "cancelled":
+      return "canceled";
+    case "unknown":
+      return "unknown";
+    default:
+      return normalized;
+  }
+}
+
 function detectFormat(raw: Record<string, unknown>, source: LogSourceConfig, fileName: string): Exclude<LogSourceConfig["format"], "auto"> | null {
   if (source.format && source.format !== "auto") {
     return source.format;
@@ -189,9 +230,11 @@ function parseGarageRecord(
   const response = (raw.response ?? {}) as Record<string, unknown>;
   const urlParts = parseUrl(asString(request.url));
   const durationMs = asNumber(response.duration_ms);
+  const statusCode = asNumber(response.status_code);
   const successValue = typeof response.ok === "boolean" ? response.ok : null;
   const result = successValue === null ? "unknown" : successValue ? "positive" : "negative";
   const operation = asString(((raw.meta ?? {}) as Record<string, unknown>).bitrix_method) ?? deriveOperation(urlParts.path, "request");
+  const outcome = normalizeOutcome(response.outcome, result, statusCode);
 
   return {
     id: buildEntryId(source.id, fileName, lineNumber),
@@ -211,10 +254,10 @@ function parseGarageRecord(
     host: urlParts.host,
     path: urlParts.path,
     query: urlParts.query,
-    statusCode: asNumber(response.status_code),
+    statusCode,
     durationMs,
     result,
-    outcome: asString(response.outcome) ?? result,
+    outcome,
     success: successValue,
     error: asString(response.error),
     requestPreview: toPreview(request.payload ?? request.headers, snippetLength),
@@ -245,7 +288,9 @@ function parseLegacyPythonRecord(
   const urlParts = parseUrl(asString(raw.url));
   const successValue = typeof raw.success === "boolean" ? raw.success : null;
   const result = successValue === null ? "unknown" : successValue ? "positive" : "negative";
+  const statusCode = asNumber(raw.http_status);
   const operation = asString(raw.operation) ?? deriveOperation(urlParts.path, "request");
+  const outcome = normalizeOutcome(raw.outcome, result, statusCode);
 
   return {
     id: buildEntryId(source.id, fileName, lineNumber),
@@ -265,10 +310,10 @@ function parseLegacyPythonRecord(
     host: urlParts.host,
     path: urlParts.path,
     query: urlParts.query,
-    statusCode: asNumber(raw.http_status),
+    statusCode,
     durationMs: asNumber(raw.duration_ms),
     result,
-    outcome: asString(raw.outcome) ?? result,
+    outcome,
     success: successValue,
     error: asString(raw.error),
     requestPreview: toPreview(raw.request, snippetLength),
@@ -297,7 +342,9 @@ function parseDotnetRecord(
   }
 
   const urlParts = parseUrl(asString(raw.url));
+  const statusCode = asNumber(raw.statusCode);
   const result = normalizeResult(raw.result, raw.isSuccessStatusCode === true ? "positive" : "negative");
+  const outcome = normalizeOutcome(raw.outcome, result, statusCode);
   const operation = deriveOperation(urlParts.path, asString(raw.destination) ?? "request");
 
   return {
@@ -318,10 +365,10 @@ function parseDotnetRecord(
     host: urlParts.host,
     path: urlParts.path,
     query: asString(raw.query) ?? urlParts.query,
-    statusCode: asNumber(raw.statusCode),
+    statusCode,
     durationMs: asNumber(raw.durationMs),
     result,
-    outcome: asString(raw.outcome) ?? result,
+    outcome,
     success: result === "unknown" ? null : result === "positive",
     error: asString(raw.applicationError) ?? asString(raw.exceptionMessage),
     requestPreview: toPreview(raw.requestBody, snippetLength),

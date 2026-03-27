@@ -63,6 +63,19 @@ describe("parseLogContent", () => {
     expect(parsed.entries[0]?.provider).toBe("BITRIX");
     expect(parsed.entries[0]?.statusCode).toBe(400);
     expect(parsed.entries[0]?.result).toBe("negative");
+    expect(parsed.entries[0]?.outcome).toBe("http_error");
+  });
+
+  it("normalizes duplicate success outcomes", () => {
+    const line =
+      '{"timestamp":"2026-03-27T09:31:00.000+07:00","provider":"Bitrix24","operation":"crm.contact.add","http_method":"POST","url":"https://example.test/rest/1/secret/crm.contact.add","request":{"fields":{"NAME":"Alice"}},"response":{"result":true},"success":true,"outcome":"positive","http_status":200,"duration_ms":120}';
+
+    const parsed = parseLogContent(line, sourceLegacy, "C:/legacy/logs/request_analytics_2026-03-27.log", 120);
+
+    expect(parsed.parseErrors).toBe(0);
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.entries[0]?.result).toBe("positive");
+    expect(parsed.entries[0]?.outcome).toBe("success");
   });
 
   it("parses dotnet analytics entries", () => {
@@ -143,8 +156,13 @@ describe("buildDashboardPayload", () => {
     expect(payload.summary.totalRequests).toBe(2);
     expect(payload.summary.positiveRequests).toBe(1);
     expect(payload.summary.negativeRequests).toBe(1);
+    expect(payload.summary.avgGapMs).toBe(3600000);
+    expect(payload.summary.p95GapMs).toBe(3600000);
+    expect(payload.summary.maxGapMs).toBe(3600000);
     expect(payload.charts.timeline).toHaveLength(2);
     expect(payload.tables.recentRequests.items).toHaveLength(2);
+    expect(payload.tables.recentRequests.items[0]?.gapSincePreviousMs).toBe(3600000);
+    expect(payload.tables.recentRequests.items[1]?.gapSincePreviousMs).toBeNull();
     expect(payload.options.providers[0]?.value).toBe("BITRIX");
   });
 });
