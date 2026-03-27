@@ -2,11 +2,13 @@
 
 Ниже рекомендованный вариант: `Node.js + systemd + Nginx + GitHub Actions`.
 
+Ключевой принцип для первого деплоя: сначала проверить занятые порты, текущие сайты в `nginx` и только потом что-либо публиковать на `80/443`. Если на сервере уже есть рабочие проекты, безопаснее сначала поднять панель на отдельном порту `3030` и убедиться, что она живая по IP.
+
 ## 1. Что понадобится на сервере
 
 - Ubuntu/Debian VPS;
-- `git`;
 - `node` 22+ и `npm`;
+- `rsync`;
 - `nginx`, если панель будет доступна по домену;
 - доступ к логам трех сервисов с того же сервера.
 
@@ -18,14 +20,19 @@
 
 ## 2. Первый деплой на VPS
 
-### 2.1. Склонировать проект
+### 2.1. Подготовить каталог приложения
 
 ```bash
 sudo mkdir -p /opt/query-analytics
 sudo chown -R $USER:$USER /opt/query-analytics
-git clone <YOUR_REPOSITORY_URL> /opt/query-analytics
 cd /opt/query-analytics
 ```
+
+Код можно положить любым безопасным способом:
+
+- через `git clone`, если это новый чистый сервер;
+- через архив, если приложение уже развернуто вручную;
+- через GitHub Actions, который в этом проекте доставляет релиз на VPS по SSH как `tar.gz`.
 
 ### 2.2. Подготовить `.env`
 
@@ -137,6 +144,22 @@ journalctl -u query-analytics.service -f
 
 - `deploy/nginx.query-analytics.conf`
 
+Перед изменением `nginx` обязательно проверить:
+
+```bash
+sudo ss -ltnp
+sudo ls -l /etc/nginx/sites-enabled
+sudo nginx -t
+```
+
+Если на сервере уже крутятся другие сайты, не подменяйте существующий default-site и не трогайте чужие `server_name`. Сначала проверьте панель напрямую, например так:
+
+```bash
+curl http://127.0.0.1:3030/healthz
+```
+
+И только после этого добавляйте отдельный `server_name` или отдельный location в уже существующий конфиг.
+
 Скопировать и адаптировать:
 
 ```bash
@@ -211,15 +234,13 @@ ABCP2Bitrix.Infrastructure/logs/http-analytics/http-requests-YYYY-MM-DD.jsonl
 
 ### 7.1. Что должно быть на сервере до включения CI/CD
 
-1. Репозиторий уже клонирован в `/opt/query-analytics`.
-2. На сервере настроен доступ к Git origin:
-   - либо через deploy key;
-   - либо через HTTPS token.
-3. Рабочие файлы уже созданы:
+1. На сервере уже существует каталог приложения `/opt/query-analytics`.
+2. Рабочие файлы уже созданы:
    - `.env`
    - `config/sources.local.json`
-4. `systemd`-сервис уже установлен и запускается вручную:
+3. `systemd`-сервис уже установлен и запускается вручную:
    - `query-analytics.service`
+4. Пользователь, под которым идет деплой, может зайти по SSH и перезапустить сервис.
 
 ### 7.2. Какие GitHub Secrets нужны
 
@@ -236,24 +257,23 @@ ABCP2Bitrix.Infrastructure/logs/http-analytics/http-requests-YYYY-MM-DD.jsonl
 1. GitHub Actions делает `npm ci`.
 2. Гоняет `npm run test`.
 3. Делает `npm run build`.
-4. По SSH заходит на VPS.
-5. На VPS выполняется `deploy/remote-deploy.sh`:
-   - `git fetch`
-   - `git pull --ff-only`
-   - `npm ci`
-   - `npm run build`
-   - `sudo systemctl restart query-analytics.service`
+4. Собирает `tar.gz` архив релиза без `.env` и `config/sources.local.json`.
+5. По SSH загружает архив на VPS.
+6. На VPS выполняется `deploy/remote-deploy.sh`:
+   - распаковывает архив во временный каталог;
+   - через `rsync` обновляет `/opt/query-analytics`;
+   - сохраняет локальные `.env` и `config/sources.local.json`;
+   - выполняет `npm ci`;
+   - выполняет `npm run build`;
+   - перезапускает `query-analytics.service`.
 
 ## 8. Ручной деплой без CI/CD
 
 Если нужно просто обновить панель руками:
 
 ```bash
-cd /opt/query-analytics
-git pull --ff-only
-npm ci
-npm run build
-sudo systemctl restart query-analytics.service
+scp query-analytics-release.tar.gz <USER>@<HOST>:/tmp/query-analytics-release.tar.gz
+ssh <USER>@<HOST> "APP_DIR=/opt/query-analytics SERVICE_NAME=query-analytics.service RELEASE_ARCHIVE=/tmp/query-analytics-release.tar.gz bash -s" < deploy/remote-deploy.sh
 ```
 
 ## 9. Диагностика

@@ -148,8 +148,8 @@ npm start
 - `server/analytics/indexer.ts` — кеширование файлов и пересканирование;
 - `src/App.tsx` — React dashboard;
 - `deploy/query-analytics.service` — unit-файл для `systemd`;
-- `deploy/remote-deploy.sh` — серверный deploy script;
-- `.github/workflows/deploy.yml` — пример CI/CD;
+- `deploy/remote-deploy.sh` — безопасный deploy по SSH-архиву с сохранением локальных конфигов;
+- `.github/workflows/deploy.yml` — CI/CD с упаковкой релиза и доставкой на VPS без `git pull` на сервере;
 - `deploy/nginx.query-analytics.conf` — reverse proxy для Nginx.
 
 ## VPS и автодеплой

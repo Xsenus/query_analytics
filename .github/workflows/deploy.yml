@@ -29,6 +29,16 @@ jobs:
       - name: Build application
         run: npm run build
 
+      - name: Create release archive
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude=dist \
+            --exclude=.env \
+            --exclude=config/sources.local.json \
+            -czf query-analytics-release.tar.gz .
+
       - name: Prepare SSH
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -39,6 +49,13 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
+      - name: Upload release archive
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          scp query-analytics-release.tar.gz "$VPS_USER@$VPS_HOST:/tmp/query-analytics-release.tar.gz"
+
       - name: Deploy on VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -46,4 +63,4 @@ jobs:
           VPS_APP_DIR: ${{ secrets.VPS_APP_DIR }}
           VPS_SERVICE_NAME: ${{ secrets.VPS_SERVICE_NAME }}
         run: |
-          ssh "$VPS_USER@$VPS_HOST" "APP_DIR='${VPS_APP_DIR:-/opt/query-analytics}' SERVICE_NAME='${VPS_SERVICE_NAME:-query-analytics.service}' BRANCH='${GITHUB_REF_NAME}' bash -lc 'cd \$APP_DIR && ./deploy/remote-deploy.sh'"
+          ssh "$VPS_USER@$VPS_HOST" "APP_DIR='${VPS_APP_DIR:-/opt/query-analytics}' SERVICE_NAME='${VPS_SERVICE_NAME:-query-analytics.service}' RELEASE_ARCHIVE='/tmp/query-analytics-release.tar.gz' bash -s" < deploy/remote-deploy.sh
