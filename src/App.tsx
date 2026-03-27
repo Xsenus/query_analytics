@@ -103,6 +103,22 @@ function formatDateTime(value: string | null): string {
   return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} (${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())})`;
 }
 
+function formatDateTimeParts(value: string | null): { date: string; time: string } {
+  if (!value) {
+    return { date: "—", time: "" };
+  }
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return { date: "—", time: "" };
+  }
+
+  return {
+    date: `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()}`,
+    time: `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`,
+  };
+}
+
 function normalizeEscapedFallback(value: string): string {
   return value
     .replace(/\\r\\n/g, "\n")
@@ -229,11 +245,11 @@ function Panel(props: { title: string; subtitle?: string; actions?: ReactNode; c
   );
 }
 
-function MetricCard(props: { label: string; value: string; note: string }) {
+function MetricCard(props: { label: string; value: ReactNode; note: string; compact?: boolean }) {
   return (
     <article className="metric-card">
       <span className="metric-label">{props.label}</span>
-      <strong className="metric-value">{props.value}</strong>
+      <div className={`metric-value${props.compact ? " is-compact" : ""}`}>{props.value}</div>
       <span className="metric-note">{props.note}</span>
     </article>
   );
@@ -415,6 +431,7 @@ export default function App() {
   const canShowFullRequest = Boolean(requestDetails?.requestBody);
   const canShowFullResponse = Boolean(requestDetails?.responseBody);
   const selectedRequestHasDistinctOutcome = selectedRequest ? !isOutcomeRedundant(selectedRequest.result, selectedRequest.outcome) : false;
+  const latestRequestParts = formatDateTimeParts(dashboard?.summary.latestTimestamp ?? null);
 
   return (
     <main className="shell">
@@ -585,7 +602,13 @@ export default function App() {
         />
         <MetricCard
           label="Последний запрос"
-          value={formatDateTime(dashboard?.summary.latestTimestamp ?? null)}
+          compact
+          value={
+            <>
+              <span className="metric-value-line">{latestRequestParts.date}</span>
+              {latestRequestParts.time ? <span className="metric-value-line metric-value-time">{latestRequestParts.time}</span> : null}
+            </>
+          }
           note={`Провайдеров: ${formatNumber(dashboard?.summary.uniqueProviders ?? 0)}`}
         />
       </section>

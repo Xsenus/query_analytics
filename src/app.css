@@ -335,6 +335,24 @@ button {
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
   font-size: 2rem;
   line-height: 1;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.metric-value.is-compact {
+  font-size: 1.6rem;
+}
+
+.metric-value-line {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.metric-value-time {
+  font-size: 1.15rem;
+  color: #486581;
 }
 
 .layout-grid {
