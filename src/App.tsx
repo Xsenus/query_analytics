@@ -15,11 +15,12 @@ import {
   YAxis,
 } from "recharts";
 
-import { archiveHistory, fetchDashboard, fetchRequestDetails } from "./api";
+import { archiveHistory, fetchDashboard, fetchRequestDetails, updateSourceLogging } from "./api";
 import type { DashboardPayload, RequestDetailsPayload } from "./types";
 
 type RangePreset = "24h" | "7d" | "30d" | "90d";
 type RecentRequest = DashboardPayload["tables"]["recentRequests"]["items"][number];
+type SourceActivityItem = DashboardPayload["tables"]["sourceActivity"][number];
 
 const numberFormat = new Intl.NumberFormat("ru-RU");
 const presetLabels: Record<RangePreset, string> = { "24h": "24 часа", "7d": "7 дней", "30d": "30 дней", "90d": "90 дней" };
@@ -209,6 +210,18 @@ function getIntervalLabel(value: string): string {
   return intervalLabels[value] ?? value;
 }
 
+function getLogControlLabel(enabled: boolean | null): string {
+  if (enabled === true) return "Логи включены";
+  if (enabled === false) return "Логи выключены";
+  return "Статус неизвестен";
+}
+
+function getLogControlTone(enabled: boolean | null): string {
+  if (enabled === true) return "is-positive";
+  if (enabled === false) return "is-warning";
+  return "is-negative";
+}
+
 function isOutcomeRedundant(result: string, outcome: string): boolean {
   return (
     (result === "positive" && (outcome === "positive" || outcome === "success")) ||
@@ -281,6 +294,8 @@ export default function App() {
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveMessage, setArchiveMessage] = useState<string | null>(null);
+  const [controlMessage, setControlMessage] = useState<string | null>(null);
+  const [sourceControlBusy, setSourceControlBusy] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -405,6 +420,26 @@ export default function App() {
       setError(archiveError instanceof Error ? archiveError.message : "Не удалось очистить историю");
     } finally {
       setArchiveBusy(false);
+    }
+  }
+
+  async function handleSourceLoggingToggle(sourceItem: SourceActivityItem) {
+    if (!sourceItem.logControl.supported || sourceItem.logControl.enabled === null) {
+      return;
+    }
+
+    const nextEnabled = !sourceItem.logControl.enabled;
+
+    try {
+      setSourceControlBusy((current) => ({ ...current, [sourceItem.id]: true }));
+      const payload = await updateSourceLogging(sourceItem.id, nextEnabled);
+      setControlMessage(payload.message);
+      setError(null);
+      setRefreshTick((value) => value + 1);
+    } catch (controlError) {
+      setError(controlError instanceof Error ? controlError.message : "Не удалось изменить состояние логирования");
+    } finally {
+      setSourceControlBusy((current) => ({ ...current, [sourceItem.id]: false }));
     }
   }
 
@@ -565,6 +600,7 @@ export default function App() {
 
         <div className="info-row">
           {archiveMessage ? <div className="info-banner">{archiveMessage}</div> : null}
+          {controlMessage ? <div className="info-banner">{controlMessage}</div> : null}
           {error ? <div className="error-banner">{error}</div> : null}
         </div>
       </section>
@@ -812,6 +848,24 @@ export default function App() {
                 </div>
                 <div className="source-foot">
                   <span>Последнее событие: {formatDateTime(item.lastEventAt)}</span>
+                </div>
+                <div className="source-control">
+                  <div className="source-control-head">
+                    <span className={`pill ${getLogControlTone(item.logControl.enabled)}`}>{getLogControlLabel(item.logControl.enabled)}</span>
+                    <button
+                      type="button"
+                      className="secondary-button source-control-button"
+                      disabled={!item.logControl.supported || sourceControlBusy[item.id] || item.logControl.enabled === null}
+                      onClick={() => void handleSourceLoggingToggle(item)}
+                    >
+                      {sourceControlBusy[item.id]
+                        ? "Применяю..."
+                        : item.logControl.enabled
+                          ? "Выключить логи"
+                          : "Включить логи"}
+                    </button>
+                  </div>
+                  <p className="source-control-note">{item.logControl.note ?? item.logControl.error ?? "Управление логированием недоступно."}</p>
                 </div>
                 {item.issue ? <p className="source-issue">{item.issue}</p> : null}
               </article>

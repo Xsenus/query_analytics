@@ -327,6 +327,15 @@ export function buildDashboardPayload(
         totalEntries: source.totalEntries,
         filteredEntries: sourceMap.get(source.id)?.count ?? 0,
         lastEventAt: source.lastEventAt,
+        logControl: {
+          supported: false,
+          enabled: null,
+          filePath: null,
+          applyMode: "manual",
+          serviceName: null,
+          note: null,
+          error: null,
+        },
       })),
       recentRequests: {
         page,

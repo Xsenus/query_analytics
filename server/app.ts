@@ -114,6 +114,20 @@ export function createApp(runtime: RuntimeConfig) {
     }
   });
 
+  app.post("/api/sources/:sourceId/logging", async (request, response, next) => {
+    try {
+      if (typeof request.body?.enabled !== "boolean") {
+        response.status(400).json({ error: "Поле enabled обязательно и должно быть boolean." });
+        return;
+      }
+
+      const payload = await analytics.setSourceLoggingEnabled(request.params.sourceId, request.body.enabled);
+      response.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist, { index: false, maxAge: "5m" }));
     app.get(/^(?!\/api|\/healthz).*/, (_request, response) => {

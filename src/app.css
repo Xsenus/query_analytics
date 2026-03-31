@@ -448,6 +448,31 @@ button {
   font-size: 0.9rem;
 }
 
+.source-control {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.source-control-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.source-control-button {
+  padding: 9px 14px;
+  border-radius: 12px;
+}
+
+.source-control-note {
+  margin: 0;
+  color: #486581;
+  font-size: 0.9rem;
+}
+
 .source-issue {
   color: #b45309;
 }

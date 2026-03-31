@@ -1,4 +1,4 @@
-import type { ArchiveHistoryResult, DashboardPayload, RequestDetailsPayload } from "./types";
+import type { ArchiveHistoryResult, DashboardPayload, RequestDetailsPayload, UpdateSourceLogControlResult } from "./types";
 
 export interface DashboardQuery {
   from?: string;
@@ -70,4 +70,22 @@ export async function fetchRequestDetails(id: string): Promise<RequestDetailsPay
   }
 
   return (await response.json()) as RequestDetailsPayload;
+}
+
+export async function updateSourceLogging(sourceId: string, enabled: boolean): Promise<UpdateSourceLogControlResult> {
+  const response = await fetch(`/api/sources/${encodeURIComponent(sourceId)}/logging`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ enabled }),
+  });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as UpdateSourceLogControlResult;
 }

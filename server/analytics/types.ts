@@ -48,6 +48,16 @@ export interface SourceState {
   issue: string | null;
 }
 
+export interface SourceLogControlState {
+  supported: boolean;
+  enabled: boolean | null;
+  filePath: string | null;
+  applyMode: "restart_service" | "next_run" | "manual";
+  serviceName: string | null;
+  note: string | null;
+  error: string | null;
+}
+
 export interface DashboardFilters {
   fromMs: number | null;
   toMs: number | null;
@@ -126,6 +136,7 @@ export interface DashboardPayload {
       totalEntries: number;
       filteredEntries: number;
       lastEventAt: string | null;
+      logControl: SourceLogControlState;
     }>;
     recentRequests: {
       page: number;
@@ -185,4 +196,13 @@ export interface RequestDetailsPayload {
   responseBody: string | null;
   requestBodyComplete: boolean;
   responseBodyComplete: boolean;
+}
+
+export interface UpdateSourceLogControlResult {
+  sourceId: string;
+  sourceName: string;
+  enabled: boolean;
+  previousEnabled: boolean | null;
+  message: string;
+  control: SourceLogControlState;
 }

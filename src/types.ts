@@ -64,6 +64,15 @@ export interface DashboardPayload {
       totalEntries: number;
       filteredEntries: number;
       lastEventAt: string | null;
+      logControl: {
+        supported: boolean;
+        enabled: boolean | null;
+        filePath: string | null;
+        applyMode: "restart_service" | "next_run" | "manual";
+        serviceName: string | null;
+        note: string | null;
+        error: string | null;
+      };
     }>;
     recentRequests: {
       page: number;
@@ -123,4 +132,21 @@ export interface RequestDetailsPayload {
   responseBody: string | null;
   requestBodyComplete: boolean;
   responseBodyComplete: boolean;
+}
+
+export interface UpdateSourceLogControlResult {
+  sourceId: string;
+  sourceName: string;
+  enabled: boolean;
+  previousEnabled: boolean | null;
+  message: string;
+  control: {
+    supported: boolean;
+    enabled: boolean | null;
+    filePath: string | null;
+    applyMode: "restart_service" | "next_run" | "manual";
+    serviceName: string | null;
+    note: string | null;
+    error: string | null;
+  };
 }

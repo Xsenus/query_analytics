@@ -4,9 +4,18 @@ import path from "node:path";
 import fg from "fast-glob";
 
 import { loadSourcesConfig, type RuntimeConfig } from "../config.js";
+import { readAllSourceLogControlStates, updateSourceLogControl } from "../log-controls.js";
 import { buildDashboardPayload } from "./aggregate.js";
 import { parseLogEntryAtLine, parseLogFile } from "./parser.js";
-import type { ArchiveHistoryResult, DashboardFilters, DashboardPayload, NormalizedEntry, RequestDetailsPayload, SourceState } from "./types.js";
+import type {
+  ArchiveHistoryResult,
+  DashboardFilters,
+  DashboardPayload,
+  NormalizedEntry,
+  RequestDetailsPayload,
+  SourceState,
+  UpdateSourceLogControlResult,
+} from "./types.js";
 
 interface CachedFile {
   size: number;
@@ -40,7 +49,25 @@ export class AnalyticsIndexer {
 
   async getDashboard(filters: DashboardFilters, forceRefresh = false): Promise<DashboardPayload> {
     await this.ensureFresh(forceRefresh);
-    return buildDashboardPayload(this.entries, this.sourceStates, filters, this.runtime, this.lastRefreshAt);
+    const payload = buildDashboardPayload(this.entries, this.sourceStates, filters, this.runtime, this.lastRefreshAt);
+    const sources = loadSourcesConfig(this.runtime.sourcesConfigPath);
+    const logControlStates = await readAllSourceLogControlStates(sources);
+
+    payload.tables.sourceActivity = payload.tables.sourceActivity.map((source) => ({
+      ...source,
+      logControl:
+        logControlStates.get(source.id) ?? {
+          supported: false,
+          enabled: null,
+          filePath: null,
+          applyMode: "manual",
+          serviceName: null,
+          note: null,
+          error: "Для этого источника управление логированием не настроено.",
+        },
+    }));
+
+    return payload;
   }
 
   async getHealth(forceRefresh = false) {
@@ -140,6 +167,16 @@ export class AnalyticsIndexer {
 
     await this.refresh();
     return result;
+  }
+
+  async setSourceLoggingEnabled(sourceId: string, enabled: boolean): Promise<UpdateSourceLogControlResult> {
+    const source = loadSourcesConfig(this.runtime.sourcesConfigPath).find((item) => item.id === sourceId);
+
+    if (!source) {
+      throw new Error("Источник не найден.");
+    }
+
+    return updateSourceLogControl(source, enabled);
   }
 
   private async readFullEntry(cachedEntry: NormalizedEntry): Promise<NormalizedEntry | null> {
