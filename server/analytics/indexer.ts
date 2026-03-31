@@ -25,6 +25,10 @@ function parseLineNumberFromEntryId(id: string): number | null {
   return Number.isFinite(lineNumber) && lineNumber > 0 ? lineNumber : null;
 }
 
+function getIndexedSnippetLength(snippetLength: number): number {
+  return Math.min(snippetLength, 160);
+}
+
 export class AnalyticsIndexer {
   private cache = new Map<string, CachedFile>();
   private entries: NormalizedEntry[] = [];
@@ -179,6 +183,7 @@ export class AnalyticsIndexer {
     const sources = loadSourcesConfig(this.runtime.sourcesConfigPath);
     const nextCache = new Map<string, CachedFile>();
     const nextSourceStates: SourceState[] = [];
+    const indexedSnippetLength = getIndexedSnippetLength(this.runtime.snippetLength);
 
     for (const source of sources) {
       const state: SourceState = {
@@ -235,7 +240,7 @@ export class AnalyticsIndexer {
             continue;
           }
 
-          const parsed = await parseLogFile(filePath, source, this.runtime.snippetLength, "preview");
+          const parsed = await parseLogFile(filePath, source, indexedSnippetLength, "preview");
           const sortedEntries = parsed.entries.sort((left, right) => right.unixMs - left.unixMs);
 
           nextCache.set(filePath, {
