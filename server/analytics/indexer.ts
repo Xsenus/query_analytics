@@ -8,11 +8,29 @@ import { buildDashboardPayload } from "./aggregate.js";
 import { parseLogContent } from "./parser.js";
 import type { ArchiveHistoryResult, DashboardFilters, DashboardPayload, NormalizedEntry, RequestDetailsPayload, SourceState } from "./types.js";
 
+const MAX_INDEXABLE_FILE_SIZE_BYTES = 1024 * 1024 * 1024;
+
 interface CachedFile {
   size: number;
   mtimeMs: number;
   entries: NormalizedEntry[];
   parseErrors: number;
+}
+
+function formatBytes(value: number): string {
+  if (value >= 1024 * 1024 * 1024) {
+    return `${Math.round((value / (1024 * 1024 * 1024)) * 10) / 10} ГБ`;
+  }
+
+  if (value >= 1024 * 1024) {
+    return `${Math.round((value / (1024 * 1024)) * 10) / 10} МБ`;
+  }
+
+  if (value >= 1024) {
+    return `${Math.round((value / 1024) * 10) / 10} КБ`;
+  }
+
+  return `${value} Б`;
 }
 
 export class AnalyticsIndexer {
@@ -184,45 +202,72 @@ export class AnalyticsIndexer {
       }
 
       let parseErrors = 0;
+      const issueParts: string[] = [];
+      let skippedLargeFiles = 0;
+      let skippedReadFailures = 0;
 
       for (const filePath of matchedFiles) {
-        const fileStat = await fs.stat(filePath);
-        const cached = this.cache.get(filePath);
-        const canReuse = cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size;
+        try {
+          const fileStat = await fs.stat(filePath);
 
-        if (canReuse && cached) {
-          nextCache.set(filePath, cached);
-          parseErrors += cached.parseErrors;
-          state.totalEntries += cached.entries.length;
-          const latestEntry = cached.entries[0];
+          if (fileStat.size > MAX_INDEXABLE_FILE_SIZE_BYTES) {
+            skippedLargeFiles += 1;
+            console.warn(
+              `[query-analytics] skipped oversized analytics file: ${filePath} (${formatBytes(fileStat.size)})`,
+            );
+            continue;
+          }
+
+          const cached = this.cache.get(filePath);
+          const canReuse = cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size;
+
+          if (canReuse && cached) {
+            nextCache.set(filePath, cached);
+            parseErrors += cached.parseErrors;
+            state.totalEntries += cached.entries.length;
+            const latestEntry = cached.entries[0];
+            if (latestEntry && (!state.lastEventAt || latestEntry.unixMs > Date.parse(state.lastEventAt))) {
+              state.lastEventAt = latestEntry.timestamp;
+            }
+            continue;
+          }
+
+          const content = await fs.readFile(filePath, "utf-8");
+          const parsed = parseLogContent(content, source, filePath, this.runtime.snippetLength);
+          const sortedEntries = parsed.entries.sort((left, right) => right.unixMs - left.unixMs);
+
+          nextCache.set(filePath, {
+            size: fileStat.size,
+            mtimeMs: fileStat.mtimeMs,
+            entries: sortedEntries,
+            parseErrors: parsed.parseErrors,
+          });
+
+          parseErrors += parsed.parseErrors;
+          state.totalEntries += sortedEntries.length;
+          const latestEntry = sortedEntries[0];
           if (latestEntry && (!state.lastEventAt || latestEntry.unixMs > Date.parse(state.lastEventAt))) {
             state.lastEventAt = latestEntry.timestamp;
           }
-          continue;
-        }
-
-        const content = await fs.readFile(filePath, "utf-8");
-        const parsed = parseLogContent(content, source, filePath, this.runtime.snippetLength);
-        const sortedEntries = parsed.entries.sort((left, right) => right.unixMs - left.unixMs);
-
-        nextCache.set(filePath, {
-          size: fileStat.size,
-          mtimeMs: fileStat.mtimeMs,
-          entries: sortedEntries,
-          parseErrors: parsed.parseErrors,
-        });
-
-        parseErrors += parsed.parseErrors;
-        state.totalEntries += sortedEntries.length;
-        const latestEntry = sortedEntries[0];
-        if (latestEntry && (!state.lastEventAt || latestEntry.unixMs > Date.parse(state.lastEventAt))) {
-          state.lastEventAt = latestEntry.timestamp;
+        } catch (error) {
+          skippedReadFailures += 1;
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`[query-analytics] failed to index analytics file: ${filePath}. ${message}`);
         }
       }
 
-      if (parseErrors > 0) {
+      if (parseErrors > 0 || skippedLargeFiles > 0 || skippedReadFailures > 0) {
         state.status = "warning";
-        state.issue = `Пропущено строк при разборе: ${parseErrors}`;
+        if (parseErrors > 0) {
+          issueParts.push(`Пропущено строк при разборе: ${parseErrors}.`);
+        }
+        if (skippedLargeFiles > 0) {
+          issueParts.push(`Пропущено слишком больших файлов: ${skippedLargeFiles} (лимит ${formatBytes(MAX_INDEXABLE_FILE_SIZE_BYTES)}).`);
+        }
+        if (skippedReadFailures > 0) {
+          issueParts.push(`Не удалось прочитать файлов: ${skippedReadFailures}.`);
+        }
+        state.issue = issueParts.join(" ");
       }
 
       nextSourceStates.push(state);
