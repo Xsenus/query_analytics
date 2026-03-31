@@ -59,6 +59,23 @@ function percentile(values: number[], target: number): number | null {
   return round(sorted[index]);
 }
 
+function maxValue(values: number[]): number | null {
+  if (!values.length) {
+    return null;
+  }
+
+  let max = values[0]!;
+
+  for (let index = 1; index < values.length; index += 1) {
+    const value = values[index]!;
+    if (value > max) {
+      max = value;
+    }
+  }
+
+  return round(max);
+}
+
 function filterEntries(entries: NormalizedEntry[], filters: DashboardFilters): NormalizedEntry[] {
   const search = filters.search?.toLowerCase();
 
@@ -256,10 +273,10 @@ export function buildDashboardPayload(
       successRate: filteredEntries.length === 0 ? 0 : round((positiveRequests / filteredEntries.length) * 100),
       avgDurationMs: durations.length === 0 ? null : round(durations.reduce((sum, value) => sum + value, 0) / durations.length),
       p95DurationMs: percentile(durations, 0.95),
-      maxDurationMs: durations.length === 0 ? null : round(Math.max(...durations)),
+      maxDurationMs: maxValue(durations),
       avgGapMs: gaps.length === 0 ? null : round(gaps.reduce((sum, value) => sum + value, 0) / gaps.length),
       p95GapMs: percentile(gaps, 0.95),
-      maxGapMs: gaps.length === 0 ? null : round(Math.max(...gaps)),
+      maxGapMs: maxValue(gaps),
       uniqueEndpoints: new Set(filteredEntries.map((entry) => entry.endpoint)).size,
       uniqueProviders: new Set(filteredEntries.map((entry) => entry.provider)).size,
       latestTimestamp: filteredEntries[0]?.timestamp ?? null,

@@ -200,4 +200,61 @@ describe("buildDashboardPayload", () => {
       { key: "BITRIX", count: 1 },
     ]);
   });
+
+  it("handles large selections without spreading huge arrays", () => {
+    const baseEntry = parseLogContent(
+      '{"timestamp":"2026-03-27T14:00:00.000Z","service":"abcp","request":{"method":"GET","url":"https://example.test/cp/order?number=1"},"response":{"ok":true,"outcome":"success","status_code":200,"duration_ms":100,"content_length":10,"body_preview":"ok"}}',
+      sourceGarage,
+      "C:/garage/logs/http-requests-2026-03-27.jsonl",
+      120,
+    ).entries[0]!;
+
+    const totalEntries = 110_000;
+    const entries = Array.from({ length: totalEntries }, (_, index) => {
+      const unixMs = baseEntry.unixMs - index * 1_000;
+
+      return {
+        ...baseEntry,
+        id: `bulk-${index}`,
+        timestamp: new Date(unixMs).toISOString(),
+        unixMs,
+        durationMs: index % 1_000,
+      };
+    });
+
+    const payload = buildDashboardPayload(
+      entries,
+      [
+        {
+          id: "garage",
+          name: "Garage",
+          rootPath: "C:/garage",
+          include: [],
+          format: "garage-jsonl",
+          discoveredFiles: 1,
+          totalEntries,
+          lastEventAt: entries[0]?.timestamp ?? null,
+          status: "ok",
+          issue: null,
+        },
+      ],
+      {
+        fromMs: null,
+        toMs: null,
+        sourceIds: [],
+        provider: null,
+        result: null,
+        outcome: null,
+        search: null,
+        recentPage: 1,
+        recentPageSize: 15,
+      },
+      runtime,
+      "2026-03-27T16:00:00.000Z",
+    );
+
+    expect(payload.summary.totalRequests).toBe(totalEntries);
+    expect(payload.summary.maxDurationMs).toBe(999);
+    expect(payload.summary.maxGapMs).toBe(1000);
+  });
 });
