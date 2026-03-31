@@ -95,8 +95,6 @@ function filterEntries(entries: NormalizedEntry[], filters: DashboardFilters): N
         entry.endpoint,
         entry.url ?? "",
         entry.error ?? "",
-        entry.requestPreview ?? "",
-        entry.responsePreview ?? "",
       ]
         .join(" ")
         .toLowerCase();

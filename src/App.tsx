@@ -551,7 +551,7 @@ export default function App() {
             <span>Поиск</span>
             <input
               type="search"
-              placeholder="URL, endpoint, ошибка, payload"
+              placeholder="URL, endpoint, ошибка"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />

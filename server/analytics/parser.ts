@@ -52,6 +52,14 @@ function truncate(value: string, limit: number): string {
   return `${value.slice(0, limit)}...`;
 }
 
+function compactText(value: string | null, limit: number, mode: ParseMode): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  return mode === "full" ? value : truncate(value, limit);
+}
+
 function toPreview(value: unknown, limit: number): string | null {
   if (value == null) {
     return null;
@@ -204,6 +212,14 @@ function resolveBody(value: unknown, mode: ParseMode): { body: string | null; is
   };
 }
 
+function resolvePreview(value: unknown, limit: number, mode: ParseMode): string | null {
+  return mode === "full" ? toPreview(value, limit) : null;
+}
+
+function resolvePayloadSize(value: unknown, mode: ParseMode): number | null {
+  return mode === "full" ? toPayloadSize(value) : null;
+}
+
 function deriveOperation(pathValue: string | null, fallback: string): string {
   if (!pathValue) {
     return fallback;
@@ -255,6 +271,8 @@ function parseGarageRecord(
   const outcome = normalizeOutcome(response.outcome, result, statusCode);
   const requestBody = resolveBody(request.payload ?? request.headers, mode);
   const responseBody = resolveBody(response.body_preview, "full");
+  const storedUrl = compactText(urlParts.url, 240, mode);
+  const storedQuery = mode === "full" ? urlParts.query : null;
 
   return {
     id: buildEntryId(source.id, fileName, lineNumber),
@@ -270,25 +288,25 @@ function parseGarageRecord(
     operation,
     endpoint: `${(asString(request.method) ?? "GET").toUpperCase()} ${operation}`,
     method: (asString(request.method) ?? "GET").toUpperCase(),
-    url: urlParts.url,
+    url: storedUrl,
     host: urlParts.host,
     path: urlParts.path,
-    query: urlParts.query,
+    query: storedQuery,
     statusCode,
     durationMs,
     result,
     outcome,
     success: successValue,
     error: asString(response.error),
-    requestPreview: toPreview(request.payload ?? request.headers, snippetLength),
-    responsePreview: toPreview(response.body_preview, snippetLength),
+    requestPreview: resolvePreview(request.payload ?? request.headers, snippetLength, mode),
+    responsePreview: resolvePreview(response.body_preview, snippetLength, mode),
     requestBody: requestBody.body,
     responseBody: responseBody.body,
     requestBodyComplete: mode === "full" || !requestBody.isAvailable,
     responseBodyComplete: false,
-    requestSize: toPayloadSize(request.payload),
+    requestSize: resolvePayloadSize(request.payload, mode),
     responseSize: asNumber(response.content_length),
-    metaPreview: toPreview(raw.meta, snippetLength),
+    metaPreview: resolvePreview(raw.meta, snippetLength, mode),
   };
 }
 
@@ -314,6 +332,8 @@ function parseLegacyPythonRecord(
   const outcome = normalizeOutcome(raw.outcome, result, statusCode);
   const requestBody = resolveBody(raw.request, mode);
   const responseBody = resolveBody(raw.response, mode);
+  const storedUrl = compactText(urlParts.url, 240, mode);
+  const storedQuery = mode === "full" ? urlParts.query : null;
 
   return {
     id: buildEntryId(source.id, fileName, lineNumber),
@@ -329,24 +349,24 @@ function parseLegacyPythonRecord(
     operation,
     endpoint: `${(asString(raw.http_method) ?? "GET").toUpperCase()} ${operation}`,
     method: (asString(raw.http_method) ?? "GET").toUpperCase(),
-    url: urlParts.url,
+    url: storedUrl,
     host: urlParts.host,
     path: urlParts.path,
-    query: urlParts.query,
+    query: storedQuery,
     statusCode,
     durationMs: asNumber(raw.duration_ms),
     result,
     outcome,
     success: successValue,
     error: asString(raw.error),
-    requestPreview: toPreview(raw.request, snippetLength),
-    responsePreview: toPreview(raw.response, snippetLength),
+    requestPreview: resolvePreview(raw.request, snippetLength, mode),
+    responsePreview: resolvePreview(raw.response, snippetLength, mode),
     requestBody: requestBody.body,
     responseBody: responseBody.body,
     requestBodyComplete: mode === "full" || !requestBody.isAvailable,
     responseBodyComplete: mode === "full" || !responseBody.isAvailable,
-    requestSize: toPayloadSize(raw.request),
-    responseSize: toPayloadSize(raw.response),
+    requestSize: resolvePayloadSize(raw.request, mode),
+    responseSize: resolvePayloadSize(raw.response, mode),
     metaPreview: null,
   };
 }
@@ -372,6 +392,8 @@ function parseDotnetRecord(
   const operation = deriveOperation(urlParts.path, asString(raw.destination) ?? "request");
   const requestBody = resolveBody(raw.requestBody, mode);
   const responseBody = resolveBody(raw.responseBody, mode);
+  const storedUrl = compactText(urlParts.url, 240, mode);
+  const storedQuery = mode === "full" ? asString(raw.query) ?? urlParts.query : null;
 
   return {
     id: buildEntryId(source.id, fileName, lineNumber),
@@ -387,25 +409,25 @@ function parseDotnetRecord(
     operation,
     endpoint: `${(asString(raw.method) ?? "GET").toUpperCase()} ${operation}`,
     method: (asString(raw.method) ?? "GET").toUpperCase(),
-    url: urlParts.url,
+    url: storedUrl,
     host: urlParts.host,
     path: urlParts.path,
-    query: asString(raw.query) ?? urlParts.query,
+    query: storedQuery,
     statusCode,
     durationMs: asNumber(raw.durationMs),
     result,
     outcome,
     success: result === "unknown" ? null : result === "positive",
     error: asString(raw.applicationError) ?? asString(raw.exceptionMessage),
-    requestPreview: toPreview(raw.requestBody, snippetLength),
-    responsePreview: toPreview(raw.responseBody, snippetLength),
+    requestPreview: resolvePreview(raw.requestBody, snippetLength, mode),
+    responsePreview: resolvePreview(raw.responseBody, snippetLength, mode),
     requestBody: requestBody.body,
     responseBody: responseBody.body,
     requestBodyComplete: mode === "full" || !requestBody.isAvailable,
     responseBodyComplete: mode === "full" || !responseBody.isAvailable,
     requestSize: asNumber(raw.requestBodyLength),
     responseSize: asNumber(raw.responseBodyLength),
-    metaPreview: toPreview(raw.scope, snippetLength),
+    metaPreview: resolvePreview(raw.scope, snippetLength, mode),
   };
 }
 

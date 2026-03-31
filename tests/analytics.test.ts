@@ -112,8 +112,11 @@ describe("parseLogContent", () => {
       expect(parsed.parseErrors).toBe(0);
       expect(parsed.entries).toHaveLength(2);
       expect(parsed.entries[1]?.requestBody).toBeNull();
+      expect(parsed.entries[1]?.requestPreview).toBeNull();
+      expect(parsed.entries[1]?.responsePreview).toBeNull();
       expect(detailEntry?.operation).toBe("crm.deal.list");
       expect(detailEntry?.requestBody).toContain('"ID":1');
+      expect(detailEntry?.requestPreview).toContain('"ID":1');
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
