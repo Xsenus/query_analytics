@@ -1,4 +1,6 @@
+import { createReadStream } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
 
 import type { LogSourceConfig } from "../config.js";
 import type { NormalizedEntry } from "./types.js";
@@ -7,6 +9,8 @@ interface ParseResult {
   entries: NormalizedEntry[];
   parseErrors: number;
 }
+
+type ParseMode = "preview" | "full";
 
 function normalizeProviderName(value: string | null): string {
   const normalized = (value ?? "UNKNOWN").trim().toUpperCase();
@@ -187,6 +191,19 @@ function detectFormat(raw: Record<string, unknown>, source: LogSourceConfig, fil
   return null;
 }
 
+function resolveBody(value: unknown, mode: ParseMode): { body: string | null; isAvailable: boolean } {
+  const body = toBodyText(value);
+
+  if (body === null) {
+    return { body: null, isAvailable: false };
+  }
+
+  return {
+    body: mode === "full" ? body : null,
+    isAvailable: true,
+  };
+}
+
 function deriveOperation(pathValue: string | null, fallback: string): string {
   if (!pathValue) {
     return fallback;
@@ -220,6 +237,7 @@ function parseGarageRecord(
   fileName: string,
   lineNumber: number,
   snippetLength: number,
+  mode: ParseMode,
 ): NormalizedEntry | null {
   const timestamp = asString(raw.timestamp);
   if (!timestamp) {
@@ -235,6 +253,8 @@ function parseGarageRecord(
   const result = successValue === null ? "unknown" : successValue ? "positive" : "negative";
   const operation = asString(((raw.meta ?? {}) as Record<string, unknown>).bitrix_method) ?? deriveOperation(urlParts.path, "request");
   const outcome = normalizeOutcome(response.outcome, result, statusCode);
+  const requestBody = resolveBody(request.payload ?? request.headers, mode);
+  const responseBody = resolveBody(response.body_preview, "full");
 
   return {
     id: buildEntryId(source.id, fileName, lineNumber),
@@ -262,9 +282,9 @@ function parseGarageRecord(
     error: asString(response.error),
     requestPreview: toPreview(request.payload ?? request.headers, snippetLength),
     responsePreview: toPreview(response.body_preview, snippetLength),
-    requestBody: toBodyText(request.payload ?? request.headers),
-    responseBody: toBodyText(response.body_preview),
-    requestBodyComplete: true,
+    requestBody: requestBody.body,
+    responseBody: responseBody.body,
+    requestBodyComplete: mode === "full" || !requestBody.isAvailable,
     responseBodyComplete: false,
     requestSize: toPayloadSize(request.payload),
     responseSize: asNumber(response.content_length),
@@ -279,6 +299,7 @@ function parseLegacyPythonRecord(
   fileName: string,
   lineNumber: number,
   snippetLength: number,
+  mode: ParseMode,
 ): NormalizedEntry | null {
   const timestamp = asString(raw.timestamp);
   if (!timestamp) {
@@ -291,6 +312,8 @@ function parseLegacyPythonRecord(
   const statusCode = asNumber(raw.http_status);
   const operation = asString(raw.operation) ?? deriveOperation(urlParts.path, "request");
   const outcome = normalizeOutcome(raw.outcome, result, statusCode);
+  const requestBody = resolveBody(raw.request, mode);
+  const responseBody = resolveBody(raw.response, mode);
 
   return {
     id: buildEntryId(source.id, fileName, lineNumber),
@@ -318,10 +341,10 @@ function parseLegacyPythonRecord(
     error: asString(raw.error),
     requestPreview: toPreview(raw.request, snippetLength),
     responsePreview: toPreview(raw.response, snippetLength),
-    requestBody: toBodyText(raw.request),
-    responseBody: toBodyText(raw.response),
-    requestBodyComplete: true,
-    responseBodyComplete: true,
+    requestBody: requestBody.body,
+    responseBody: responseBody.body,
+    requestBodyComplete: mode === "full" || !requestBody.isAvailable,
+    responseBodyComplete: mode === "full" || !responseBody.isAvailable,
     requestSize: toPayloadSize(raw.request),
     responseSize: toPayloadSize(raw.response),
     metaPreview: null,
@@ -335,6 +358,7 @@ function parseDotnetRecord(
   fileName: string,
   lineNumber: number,
   snippetLength: number,
+  mode: ParseMode,
 ): NormalizedEntry | null {
   const timestamp = asString(raw.timestamp);
   if (!timestamp) {
@@ -346,6 +370,8 @@ function parseDotnetRecord(
   const result = normalizeResult(raw.result, raw.isSuccessStatusCode === true ? "positive" : "negative");
   const outcome = normalizeOutcome(raw.outcome, result, statusCode);
   const operation = deriveOperation(urlParts.path, asString(raw.destination) ?? "request");
+  const requestBody = resolveBody(raw.requestBody, mode);
+  const responseBody = resolveBody(raw.responseBody, mode);
 
   return {
     id: buildEntryId(source.id, fileName, lineNumber),
@@ -373,14 +399,129 @@ function parseDotnetRecord(
     error: asString(raw.applicationError) ?? asString(raw.exceptionMessage),
     requestPreview: toPreview(raw.requestBody, snippetLength),
     responsePreview: toPreview(raw.responseBody, snippetLength),
-    requestBody: toBodyText(raw.requestBody),
-    responseBody: toBodyText(raw.responseBody),
-    requestBodyComplete: true,
-    responseBodyComplete: true,
+    requestBody: requestBody.body,
+    responseBody: responseBody.body,
+    requestBodyComplete: mode === "full" || !requestBody.isAvailable,
+    responseBodyComplete: mode === "full" || !responseBody.isAvailable,
     requestSize: asNumber(raw.requestBodyLength),
     responseSize: asNumber(raw.responseBodyLength),
     metaPreview: toPreview(raw.scope, snippetLength),
   };
+}
+
+function parseLogLine(
+  rawLine: string,
+  source: LogSourceConfig,
+  filePath: string,
+  fileName: string,
+  lineNumber: number,
+  snippetLength: number,
+  mode: ParseMode,
+): { entry: NormalizedEntry | null; parseError: boolean } {
+  const trimmed = rawLine.trim();
+  if (!trimmed) {
+    return { entry: null, parseError: false };
+  }
+
+  try {
+    const payload = JSON.parse(trimmed) as Record<string, unknown>;
+    const format = detectFormat(payload, source, fileName);
+    let entry: NormalizedEntry | null = null;
+
+    switch (format) {
+      case "garage-jsonl":
+        entry = parseGarageRecord(payload, source, filePath, fileName, lineNumber, snippetLength, mode);
+        break;
+      case "request-analytics":
+        entry = parseLegacyPythonRecord(payload, source, filePath, fileName, lineNumber, snippetLength, mode);
+        break;
+      case "dotnet-jsonl":
+        entry = parseDotnetRecord(payload, source, filePath, fileName, lineNumber, snippetLength, mode);
+        break;
+      default:
+        return { entry: null, parseError: true };
+    }
+
+    if (entry && Number.isFinite(entry.unixMs)) {
+      return { entry, parseError: false };
+    }
+
+    return { entry: null, parseError: entry !== null };
+  } catch {
+    return { entry: null, parseError: true };
+  }
+}
+
+export async function parseLogFile(
+  filePath: string,
+  source: LogSourceConfig,
+  snippetLength: number,
+  mode: ParseMode = "preview",
+): Promise<ParseResult> {
+  const fileName = path.basename(filePath);
+  const entries: NormalizedEntry[] = [];
+  let parseErrors = 0;
+  let lineNumber = 0;
+
+  const reader = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+
+  try {
+    for await (const line of reader) {
+      lineNumber += 1;
+      const parsed = parseLogLine(line, source, filePath, fileName, lineNumber, snippetLength, mode);
+
+      if (parsed.parseError) {
+        parseErrors += 1;
+      }
+
+      if (parsed.entry) {
+        entries.push(parsed.entry);
+      }
+    }
+  } finally {
+    reader.close();
+  }
+
+  return { entries, parseErrors };
+}
+
+export async function parseLogEntryAtLine(
+  filePath: string,
+  source: LogSourceConfig,
+  snippetLength: number,
+  targetLineNumber: number,
+  mode: ParseMode = "full",
+): Promise<NormalizedEntry | null> {
+  if (!Number.isFinite(targetLineNumber) || targetLineNumber <= 0) {
+    return null;
+  }
+
+  const fileName = path.basename(filePath);
+  let lineNumber = 0;
+
+  const reader = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+
+  try {
+    for await (const line of reader) {
+      lineNumber += 1;
+      if (lineNumber !== targetLineNumber) {
+        continue;
+      }
+
+      const parsed = parseLogLine(line, source, filePath, fileName, lineNumber, snippetLength, mode);
+      return parsed.entry;
+    }
+  } finally {
+    reader.close();
+  }
+
+  return null;
 }
 
 export function parseLogContent(
@@ -388,43 +529,21 @@ export function parseLogContent(
   source: LogSourceConfig,
   filePath: string,
   snippetLength: number,
+  mode: ParseMode = "full",
 ): ParseResult {
   const fileName = path.basename(filePath);
   const entries: NormalizedEntry[] = [];
   let parseErrors = 0;
 
   for (const [lineIndex, line] of content.split(/\r?\n/).entries()) {
-    const rawLine = line.trim();
-    if (!rawLine) {
-      continue;
+    const parsed = parseLogLine(line, source, filePath, fileName, lineIndex + 1, snippetLength, mode);
+
+    if (parsed.parseError) {
+      parseErrors += 1;
     }
 
-    try {
-      const payload = JSON.parse(rawLine) as Record<string, unknown>;
-      const format = detectFormat(payload, source, fileName);
-      let entry: NormalizedEntry | null = null;
-
-      switch (format) {
-        case "garage-jsonl":
-          entry = parseGarageRecord(payload, source, filePath, fileName, lineIndex + 1, snippetLength);
-          break;
-        case "request-analytics":
-          entry = parseLegacyPythonRecord(payload, source, filePath, fileName, lineIndex + 1, snippetLength);
-          break;
-        case "dotnet-jsonl":
-          entry = parseDotnetRecord(payload, source, filePath, fileName, lineIndex + 1, snippetLength);
-          break;
-        default:
-          parseErrors += 1;
-      }
-
-      if (entry && Number.isFinite(entry.unixMs)) {
-        entries.push(entry);
-      } else if (entry) {
-        parseErrors += 1;
-      }
-    } catch {
-      parseErrors += 1;
+    if (parsed.entry) {
+      entries.push(parsed.entry);
     }
   }
 

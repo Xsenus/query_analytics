@@ -1,7 +1,11 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { buildDashboardPayload } from "../server/analytics/aggregate.js";
-import { parseLogContent } from "../server/analytics/parser.js";
+import { parseLogContent, parseLogEntryAtLine, parseLogFile } from "../server/analytics/parser.js";
 import type { RuntimeConfig } from "../server/config.js";
 import type { SourceState } from "../server/analytics/types.js";
 
@@ -89,6 +93,30 @@ describe("parseLogContent", () => {
     expect(parsed.entries[0]?.provider).toBe("ABCP");
     expect(parsed.entries[0]?.operation).toBe("payment/token");
     expect(parsed.entries[0]?.error).toBe("There is no order debt");
+  });
+
+  it("streams log files line by line", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "query-analytics-"));
+    const filePath = path.join(tempDir, "http-requests-2026-03-31.jsonl");
+    const content = [
+      '{"timestamp":"2026-03-31T10:00:00.000+07:00","service":"abcp","request":{"method":"GET","url":"https://example.test/cp/order?number=1"},"response":{"ok":true,"outcome":"success","status_code":200,"duration_ms":15,"body_preview":"ok"}}',
+      '{"timestamp":"2026-03-31T10:00:01.000+07:00","service":"bitrix24","request":{"method":"POST","url":"https://example.test/rest/1/secret/crm.deal.list","payload":{"ID":1}},"response":{"ok":true,"outcome":"success","status_code":200,"duration_ms":25,"body_preview":"{\\"result\\":true}"},"meta":{"bitrix_method":"crm.deal.list"}}',
+    ].join("\n");
+
+    await fs.writeFile(filePath, content, "utf8");
+
+    try {
+      const parsed = await parseLogFile(filePath, sourceGarage, 120, "preview");
+      const detailEntry = await parseLogEntryAtLine(filePath, sourceGarage, 120, 2, "full");
+
+      expect(parsed.parseErrors).toBe(0);
+      expect(parsed.entries).toHaveLength(2);
+      expect(parsed.entries[1]?.requestBody).toBeNull();
+      expect(detailEntry?.operation).toBe("crm.deal.list");
+      expect(detailEntry?.requestBody).toContain('"ID":1');
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 

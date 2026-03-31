@@ -5,10 +5,8 @@ import fg from "fast-glob";
 
 import { loadSourcesConfig, type RuntimeConfig } from "../config.js";
 import { buildDashboardPayload } from "./aggregate.js";
-import { parseLogContent } from "./parser.js";
+import { parseLogEntryAtLine, parseLogFile } from "./parser.js";
 import type { ArchiveHistoryResult, DashboardFilters, DashboardPayload, NormalizedEntry, RequestDetailsPayload, SourceState } from "./types.js";
-
-const MAX_INDEXABLE_FILE_SIZE_BYTES = 1024 * 1024 * 1024;
 
 interface CachedFile {
   size: number;
@@ -17,20 +15,14 @@ interface CachedFile {
   parseErrors: number;
 }
 
-function formatBytes(value: number): string {
-  if (value >= 1024 * 1024 * 1024) {
-    return `${Math.round((value / (1024 * 1024 * 1024)) * 10) / 10} ГБ`;
+function parseLineNumberFromEntryId(id: string): number | null {
+  const separatorIndex = id.lastIndexOf(":");
+  if (separatorIndex < 0) {
+    return null;
   }
 
-  if (value >= 1024 * 1024) {
-    return `${Math.round((value / (1024 * 1024)) * 10) / 10} МБ`;
-  }
-
-  if (value >= 1024) {
-    return `${Math.round((value / 1024) * 10) / 10} КБ`;
-  }
-
-  return `${value} Б`;
+  const lineNumber = Number.parseInt(id.slice(separatorIndex + 1), 10);
+  return Number.isFinite(lineNumber) && lineNumber > 0 ? lineNumber : null;
 }
 
 export class AnalyticsIndexer {
@@ -60,11 +52,13 @@ export class AnalyticsIndexer {
 
   async getRequestDetails(id: string, forceRefresh = false): Promise<RequestDetailsPayload | null> {
     await this.ensureFresh(forceRefresh);
-    const entry = this.entries.find((item) => item.id === id);
+    const cachedEntry = this.entries.find((item) => item.id === id);
 
-    if (!entry) {
+    if (!cachedEntry) {
       return null;
     }
+
+    const entry = (await this.readFullEntry(cachedEntry)) ?? cachedEntry;
 
     return {
       id: entry.id,
@@ -144,6 +138,24 @@ export class AnalyticsIndexer {
     return result;
   }
 
+  private async readFullEntry(cachedEntry: NormalizedEntry): Promise<NormalizedEntry | null> {
+    const lineNumber = parseLineNumberFromEntryId(cachedEntry.id);
+    if (lineNumber === null) {
+      return null;
+    }
+
+    const source = loadSourcesConfig(this.runtime.sourcesConfigPath).find((item) => item.id === cachedEntry.sourceId);
+    if (!source) {
+      return null;
+    }
+
+    try {
+      return await parseLogEntryAtLine(cachedEntry.filePath, source, this.runtime.snippetLength, lineNumber, "full");
+    } catch {
+      return null;
+    }
+  }
+
   private async ensureFresh(forceRefresh: boolean): Promise<void> {
     const isFresh =
       !forceRefresh &&
@@ -203,20 +215,11 @@ export class AnalyticsIndexer {
 
       let parseErrors = 0;
       const issueParts: string[] = [];
-      let skippedLargeFiles = 0;
       let skippedReadFailures = 0;
 
       for (const filePath of matchedFiles) {
         try {
           const fileStat = await fs.stat(filePath);
-
-          if (fileStat.size > MAX_INDEXABLE_FILE_SIZE_BYTES) {
-            skippedLargeFiles += 1;
-            console.warn(
-              `[query-analytics] skipped oversized analytics file: ${filePath} (${formatBytes(fileStat.size)})`,
-            );
-            continue;
-          }
 
           const cached = this.cache.get(filePath);
           const canReuse = cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size;
@@ -232,8 +235,7 @@ export class AnalyticsIndexer {
             continue;
           }
 
-          const content = await fs.readFile(filePath, "utf-8");
-          const parsed = parseLogContent(content, source, filePath, this.runtime.snippetLength);
+          const parsed = await parseLogFile(filePath, source, this.runtime.snippetLength, "preview");
           const sortedEntries = parsed.entries.sort((left, right) => right.unixMs - left.unixMs);
 
           nextCache.set(filePath, {
@@ -256,13 +258,10 @@ export class AnalyticsIndexer {
         }
       }
 
-      if (parseErrors > 0 || skippedLargeFiles > 0 || skippedReadFailures > 0) {
+      if (parseErrors > 0 || skippedReadFailures > 0) {
         state.status = "warning";
         if (parseErrors > 0) {
           issueParts.push(`Пропущено строк при разборе: ${parseErrors}.`);
-        }
-        if (skippedLargeFiles > 0) {
-          issueParts.push(`Пропущено слишком больших файлов: ${skippedLargeFiles} (лимит ${formatBytes(MAX_INDEXABLE_FILE_SIZE_BYTES)}).`);
         }
         if (skippedReadFailures > 0) {
           issueParts.push(`Не удалось прочитать файлов: ${skippedReadFailures}.`);
