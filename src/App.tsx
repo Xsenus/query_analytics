@@ -15,8 +15,8 @@ import {
   YAxis,
 } from "recharts";
 
-import { archiveHistory, fetchDashboard, fetchRequestDetails, updateSourceLogging } from "./api";
-import type { DashboardPayload, RequestDetailsPayload } from "./types";
+import { cleanupHistory, fetchDashboard, fetchRequestDetails, updateSourceLogging } from "./api";
+import type { DashboardPayload, HistoryCleanupMode, RequestDetailsPayload } from "./types";
 
 type RangePreset = "24h" | "7d" | "30d" | "90d";
 type RecentRequest = DashboardPayload["tables"]["recentRequests"]["items"][number];
@@ -39,6 +39,11 @@ const outcomeLabels: Record<string, string> = {
 const providerLabels: Record<string, string> = { ABCP: "ABCP", BITRIX: "Битрикс24", VERSTA24: "Versta24" };
 const sourceStatusLabels: Record<string, string> = { ok: "Норма", warning: "Внимание", missing: "Недоступно" };
 const intervalLabels: Record<string, string> = { hour: "по часам", day: "по дням", month: "по месяцам" };
+const cleanupModeLabels: Record<HistoryCleanupMode, string> = {
+  archive: "Архивировать",
+  delete: "Удалить старые логи",
+  full_clear: "Полная очистка",
+};
 const outcomeColors = ["#0f766e", "#f59e0b", "#94a3b8", "#dc2626", "#7c3aed", "#475569"];
 
 function pad(value: number): string {
@@ -210,6 +215,18 @@ function getIntervalLabel(value: string): string {
   return intervalLabels[value] ?? value;
 }
 
+function getCleanupModeDescription(mode: HistoryCleanupMode, beforeLabel: string): string {
+  if (mode === "archive") {
+    return `Переместит файлы до ${beforeLabel} в архив. Текущий день и недавно изменённые файлы будут пропущены.`;
+  }
+
+  if (mode === "delete") {
+    return `Безвозвратно удалит файлы до ${beforeLabel}. Текущий день и недавно изменённые файлы будут пропущены.`;
+  }
+
+  return "Удалит все старые log-файлы выбранных источников и очистит архив. Текущий день и недавно изменённые файлы будут пропущены.";
+}
+
 function getLogControlLabel(enabled: boolean | null): string {
   if (enabled === true) return "Логи включены";
   if (enabled === false) return "Логи выключены";
@@ -293,6 +310,7 @@ export default function App() {
   const [showFullResponse, setShowFullResponse] = useState(false);
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
+  const [cleanupMode, setCleanupMode] = useState<HistoryCleanupMode>("archive");
   const [archiveMessage, setArchiveMessage] = useState<string | null>(null);
   const [controlMessage, setControlMessage] = useState<string | null>(null);
   const [sourceControlBusy, setSourceControlBusy] = useState<Record<string, boolean>>({});
@@ -407,9 +425,10 @@ export default function App() {
     const sourceIds = source === "all" ? [] : [source];
     try {
       setArchiveBusy(true);
-      const payload = await archiveHistory(beforeIso, sourceIds);
+      const payload = await cleanupHistory(beforeIso, sourceIds, cleanupMode);
+      const modeLabel = cleanupModeLabels[payload.mode];
       setArchiveMessage(
-        `Архивировано файлов: ${payload.archivedFiles}. Пропущено: ${payload.skippedFiles}. ` +
+        `${modeLabel}: обработано ${payload.affectedFiles}, архивировано ${payload.archivedFiles}, удалено ${payload.deletedFiles}, пропущено ${payload.skippedFiles}. ` +
           `Текущие и недавно изменённые файлы не затрагиваются.`,
       );
       setArchiveModalOpen(false);
@@ -459,6 +478,7 @@ export default function App() {
     source === "all" ? `все источники (${dashboard?.options.sources.length ?? 0})` : dashboard?.options.sources.find((item) => item.value === source)?.label ?? source;
   const archiveBeforeDate = new Date(range.to);
   const archiveBeforeLabel = Number.isFinite(archiveBeforeDate.getTime()) ? formatDateTime(archiveBeforeDate.toISOString()) : "текущего времени";
+  const cleanupModeDescription = getCleanupModeDescription(cleanupMode, archiveBeforeLabel);
   const requestPreviewText = formatPreview(requestDetails?.requestPreview ?? selectedRequest?.requestPreview ?? null);
   const responsePreviewText = formatPreview(requestDetails?.responsePreview ?? selectedRequest?.responsePreview ?? null);
   const requestFullText = formatPreview(requestDetails?.requestBody ?? requestDetails?.requestPreview ?? selectedRequest?.requestPreview ?? null);
@@ -1128,7 +1148,7 @@ export default function App() {
             <div className="modal-header">
               <div>
                 <h3>Очистка истории</h3>
-                <p>Старые логи будут перемещены в архив, а не удалены безвозвратно.</p>
+                <p>Выберите, что делать со старыми логами: архивировать, удалить или очистить историю полностью.</p>
               </div>
               <button type="button" className="icon-button" onClick={() => setArchiveModalOpen(false)}>
                 Закрыть
@@ -1137,11 +1157,31 @@ export default function App() {
 
             <div className="details-stack">
               <div className="modal-block">
+                <span className="details-label">Режим очистки</span>
+                <div className="cleanup-mode-grid">
+                  {(["archive", "delete", "full_clear"] as HistoryCleanupMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={`cleanup-mode-button${cleanupMode === mode ? " is-active" : ""}${mode === "full_clear" ? " is-danger" : ""}`}
+                      onClick={() => setCleanupMode(mode)}
+                    >
+                      <strong>{cleanupModeLabels[mode]}</strong>
+                      <span>
+                        {mode === "archive"
+                          ? "Безопасный режим"
+                          : mode === "delete"
+                            ? "Удаление без архива"
+                            : "Удалит старые логи и архив"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="modal-block">
                 <span className="details-label">Что произойдёт</span>
-                <p>
-                  В архив уйдут только файлы до <strong>{archiveBeforeLabel}</strong>. Текущий день и файлы, которые менялись в
-                  последние 10 минут, будут пропущены.
-                </p>
+                <p>{cleanupModeDescription}</p>
               </div>
 
               <div className="modal-block">
@@ -1155,7 +1195,7 @@ export default function App() {
                 Отмена
               </button>
               <button type="button" className="danger-button" disabled={archiveBusy} onClick={() => void handleArchiveHistory()}>
-                {archiveBusy ? "Архивирую..." : "Очистить историю"}
+                {archiveBusy ? "Применяю..." : cleanupModeLabels[cleanupMode]}
               </button>
             </div>
           </div>

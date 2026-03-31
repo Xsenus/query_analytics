@@ -58,6 +58,8 @@ export interface SourceLogControlState {
   error: string | null;
 }
 
+export type HistoryCleanupMode = "archive" | "delete" | "full_clear";
+
 export interface DashboardFilters {
   fromMs: number | null;
   toMs: number | null;
@@ -164,15 +166,20 @@ export interface DashboardPayload {
   };
 }
 
-export interface ArchiveHistoryResult {
+export interface HistoryCleanupResult {
+  mode: HistoryCleanupMode;
+  affectedFiles: number;
   archivedFiles: number;
+  deletedFiles: number;
   skippedFiles: number;
-  archivedAt: string;
-  archiveRoot: string;
+  completedAt: string;
+  archiveRoot: string | null;
   sources: Array<{
     id: string;
     name: string;
+    affectedFiles: number;
     archivedFiles: number;
+    deletedFiles: number;
     skippedFiles: number;
   }>;
 }

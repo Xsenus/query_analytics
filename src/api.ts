@@ -1,4 +1,4 @@
-import type { ArchiveHistoryResult, DashboardPayload, RequestDetailsPayload, UpdateSourceLogControlResult } from "./types";
+import type { DashboardPayload, HistoryCleanupMode, HistoryCleanupResult, RequestDetailsPayload, UpdateSourceLogControlResult } from "./types";
 
 export interface DashboardQuery {
   from?: string;
@@ -35,8 +35,8 @@ export async function fetchDashboard(query: DashboardQuery): Promise<DashboardPa
   return (await response.json()) as DashboardPayload;
 }
 
-export async function archiveHistory(before: string, sourceIds: string[]): Promise<ArchiveHistoryResult> {
-  const response = await fetch("/api/history/archive", {
+export async function cleanupHistory(before: string, sourceIds: string[], mode: HistoryCleanupMode): Promise<HistoryCleanupResult> {
+  const response = await fetch("/api/history/cleanup", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -45,6 +45,7 @@ export async function archiveHistory(before: string, sourceIds: string[]): Promi
     body: JSON.stringify({
       before,
       sourceIds,
+      mode,
     }),
   });
 
@@ -53,7 +54,7 @@ export async function archiveHistory(before: string, sourceIds: string[]): Promi
     throw new Error(payload?.error ?? `HTTP ${response.status}`);
   }
 
-  return (await response.json()) as ArchiveHistoryResult;
+  return (await response.json()) as HistoryCleanupResult;
 }
 
 export async function fetchRequestDetails(id: string): Promise<RequestDetailsPayload> {

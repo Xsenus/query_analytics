@@ -8,9 +8,10 @@ import { readAllSourceLogControlStates, updateSourceLogControl } from "../log-co
 import { buildDashboardPayload } from "./aggregate.js";
 import { parseLogEntryAtLine, parseLogFile } from "./parser.js";
 import type {
-  ArchiveHistoryResult,
   DashboardFilters,
   DashboardPayload,
+  HistoryCleanupMode,
+  HistoryCleanupResult,
   NormalizedEntry,
   RequestDetailsPayload,
   SourceState,
@@ -36,6 +37,15 @@ function parseLineNumberFromEntryId(id: string): number | null {
 
 function getIndexedSnippetLength(snippetLength: number): number {
   return Math.min(snippetLength, 160);
+}
+
+function getArchiveRootPath(rootPath: string): string {
+  return path.resolve(rootPath, ".query-analytics-archive");
+}
+
+function isPathInsideRoot(targetPath: string, rootPath: string): boolean {
+  const relativePath = path.relative(rootPath, targetPath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
 export class AnalyticsIndexer {
@@ -113,7 +123,7 @@ export class AnalyticsIndexer {
     };
   }
 
-  async archiveHistory(sourceIds: string[], beforeMs: number): Promise<ArchiveHistoryResult> {
+  async cleanupHistory(sourceIds: string[], beforeMs: number, mode: HistoryCleanupMode): Promise<HistoryCleanupResult> {
     const sources = loadSourcesConfig(this.runtime.sourcesConfigPath);
     const selectedSources = sourceIds.length > 0 ? sources.filter((source) => sourceIds.includes(source.id)) : sources;
     const archiveStamp = new Date().toISOString().replaceAll(":", "-");
@@ -121,17 +131,21 @@ export class AnalyticsIndexer {
     const todayIso = new Date().toISOString().slice(0, 10);
     const beforeIso = new Date(beforeMs).toISOString().slice(0, 10);
     const protectedMtimeMs = Date.now() - 10 * 60 * 1000;
-    const result: ArchiveHistoryResult = {
+    const result: HistoryCleanupResult = {
+      mode,
+      affectedFiles: 0,
       archivedFiles: 0,
+      deletedFiles: 0,
       skippedFiles: 0,
-      archivedAt: new Date().toISOString(),
-      archiveRoot,
+      completedAt: new Date().toISOString(),
+      archiveRoot: mode === "archive" ? archiveRoot : null,
       sources: [],
     };
 
     for (const source of selectedSources) {
       const matchedFiles = await this.getMatchedFiles(source.rootPath, source.include);
       let archivedFiles = 0;
+      let deletedFiles = 0;
       let skippedFiles = 0;
 
       for (const filePath of matchedFiles) {
@@ -140,7 +154,7 @@ export class AnalyticsIndexer {
         const fileDate = dateMatch?.[1] ?? new Date(fileStat.mtimeMs).toISOString().slice(0, 10);
 
         const isToday = fileDate >= todayIso;
-        const isBeforeCutoff = fileDate <= beforeIso;
+        const isBeforeCutoff = mode === "full_clear" ? true : fileDate <= beforeIso;
         const isRecentlyModified = fileStat.mtimeMs >= protectedMtimeMs;
 
         if (!isBeforeCutoff || isToday || isRecentlyModified) {
@@ -148,25 +162,59 @@ export class AnalyticsIndexer {
           continue;
         }
 
-        const relativePath = path.relative(source.rootPath, filePath);
-        const archiveTarget = path.join(source.rootPath, archiveRoot, archiveStamp, relativePath);
-        await fs.mkdir(path.dirname(archiveTarget), { recursive: true });
-        await fs.rename(filePath, archiveTarget);
-        archivedFiles += 1;
+        if (mode === "archive") {
+          const relativePath = path.relative(source.rootPath, filePath);
+          const archiveTarget = path.join(source.rootPath, archiveRoot, archiveStamp, relativePath);
+          await fs.mkdir(path.dirname(archiveTarget), { recursive: true });
+          await fs.rename(filePath, archiveTarget);
+          archivedFiles += 1;
+          continue;
+        }
+
+        await fs.rm(filePath, { force: true });
+        deletedFiles += 1;
       }
 
+      if (mode === "full_clear") {
+        const archiveRootPath = getArchiveRootPath(source.rootPath);
+
+        if (isPathInsideRoot(archiveRootPath, source.rootPath)) {
+          try {
+            await fs.access(archiveRootPath);
+            const archivedFiles = await fg("**/*", {
+              cwd: archiveRootPath,
+              onlyFiles: true,
+              suppressErrors: true,
+            });
+            deletedFiles += archivedFiles.length;
+            await fs.rm(archiveRootPath, { recursive: true, force: true });
+          } catch {
+            // Ignore missing archive root during full cleanup.
+          }
+        }
+      }
+
+      const affectedFiles = archivedFiles + deletedFiles;
+      result.affectedFiles += affectedFiles;
       result.archivedFiles += archivedFiles;
+      result.deletedFiles += deletedFiles;
       result.skippedFiles += skippedFiles;
       result.sources.push({
         id: source.id,
         name: source.name,
+        affectedFiles,
         archivedFiles,
+        deletedFiles,
         skippedFiles,
       });
     }
 
     await this.refresh();
     return result;
+  }
+
+  async archiveHistory(sourceIds: string[], beforeMs: number): Promise<HistoryCleanupResult> {
+    return this.cleanupHistory(sourceIds, beforeMs, "archive");
   }
 
   async setSourceLoggingEnabled(sourceId: string, enabled: boolean): Promise<UpdateSourceLogControlResult> {

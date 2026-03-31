@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
 
 import { AnalyticsIndexer } from "./analytics/indexer.js";
-import type { DashboardFilters } from "./analytics/types.js";
+import type { DashboardFilters, HistoryCleanupMode } from "./analytics/types.js";
 import type { RuntimeConfig } from "./config.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,6 +30,10 @@ function parseOptionalDate(value: unknown): number | null {
 
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseCleanupMode(value: unknown): HistoryCleanupMode | null {
+  return value === "archive" || value === "delete" || value === "full_clear" ? value : null;
 }
 
 function parseFilters(request: Request): DashboardFilters {
@@ -89,6 +93,31 @@ export function createApp(runtime: RuntimeConfig) {
       }
 
       response.setHeader("Cache-Control", "no-store");
+      response.json(payload);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post("/api/history/cleanup", async (request, response, next) => {
+    try {
+      const sourceIds = Array.isArray(request.body?.sourceIds)
+        ? request.body.sourceIds.filter((item: unknown): item is string => typeof item === "string" && item.trim() !== "")
+        : [];
+      const before = typeof request.body?.before === "string" ? Date.parse(request.body.before) : Number.NaN;
+      const mode = parseCleanupMode(request.body?.mode);
+
+      if (!Number.isFinite(before)) {
+        response.status(400).json({ error: "Поле before обязательно и должно быть корректной датой." });
+        return;
+      }
+
+      if (mode === null) {
+        response.status(400).json({ error: "Поле mode обязательно и должно быть archive, delete или full_clear." });
+        return;
+      }
+
+      const payload = await analytics.cleanupHistory(sourceIds, before, mode);
       response.json(payload);
     } catch (error) {
       next(error);
