@@ -240,22 +240,42 @@ function getIntervalLabel(value: string): string {
 
 function getCleanupModeDescription(mode: HistoryCleanupMode, beforeLabel: string): string {
   if (mode === "archive") {
-    return `Переместит файлы до ${beforeLabel} в архив. Текущий день и недавно изменённые файлы будут пропущены.`;
+    return `Сожмёт файлы до ${beforeLabel} в .gz и переместит в архив. Текущий день и недавно изменённые исходные файлы будут пропущены.`;
   }
 
   if (mode === "delete") {
-    return `Безвозвратно удалит файлы до ${beforeLabel}. Текущий день и недавно изменённые файлы будут пропущены.`;
+    return `Безвозвратно удалит файлы до ${beforeLabel}, включая ранее архивированные копии. Текущий день будет пропущен.`;
   }
 
   return "Удалит все старые log-файлы выбранных источников и очистит архив. Текущий день и недавно изменённые файлы будут пропущены.";
 }
 
 function getCleanupActionLabel(action: HistoryCleanupResult["files"][number]["action"]): string {
-  return action === "archived" ? "Архивирован" : "Удалён";
+  return action === "archived" ? "Сжат и архивирован" : "Удалён";
 }
 
 function getCleanupActionTone(action: HistoryCleanupResult["files"][number]["action"]): string {
   return action === "archived" ? "is-positive" : "is-negative";
+}
+
+function isArchiveCleanupFile(filePath: string): boolean {
+  return filePath.includes(".query-analytics-archive");
+}
+
+function getCleanupSummary(mode: HistoryCleanupMode, payload: HistoryCleanupResult): string {
+  const prefix =
+    `${cleanupModeLabels[mode]}: обработано ${payload.affectedFiles}, архивировано ${payload.archivedFiles}, ` +
+    `удалено ${payload.deletedFiles}, пропущено ${payload.skippedFiles}.`;
+
+  if (mode === "archive") {
+    return `${prefix} Старые логи сжимаются в .gz, текущие и недавно изменённые исходные файлы не затрагиваются.`;
+  }
+
+  if (mode === "delete") {
+    return `${prefix} Удаляются и старые исходные логи, и ранее архивированные копии до выбранной даты.`;
+  }
+
+  return `${prefix} Архив источника очищается полностью, текущие и недавно изменённые исходные файлы не затрагиваются.`;
 }
 
 function getLogControlLabel(enabled: boolean | null): string {
@@ -458,11 +478,7 @@ export default function App() {
     try {
       setArchiveBusy(true);
       const payload = await cleanupHistory(beforeIso, sourceIds, cleanupMode);
-      const modeLabel = cleanupModeLabels[payload.mode];
-      setArchiveMessage(
-        `${modeLabel}: обработано ${payload.affectedFiles}, архивировано ${payload.archivedFiles}, удалено ${payload.deletedFiles}, пропущено ${payload.skippedFiles}. ` +
-          `Текущие и недавно изменённые файлы не затрагиваются.`,
-      );
+      setArchiveMessage(getCleanupSummary(payload.mode, payload));
       setCleanupResult(payload);
       setArchiveModalOpen(false);
       setRecentPage(1);
@@ -669,8 +685,10 @@ export default function App() {
                         <code className="cleanup-file-path">{item.filePath}</code>
                         <span className="cleanup-file-note">
                           {item.action === "archived" && item.destinationPath
-                            ? `Перемещён в ${item.destinationPath}`
-                            : "Удалён без архива"}
+                            ? `Сжат и перемещён в ${item.destinationPath}`
+                            : isArchiveCleanupFile(item.filePath)
+                              ? "Удалён из архива"
+                              : "Удалён без архива"}
                         </span>
                       </article>
                     ))}

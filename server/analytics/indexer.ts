@@ -1,5 +1,8 @@
+import { createReadStream, createWriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
+import { createGzip } from "node:zlib";
 
 import fg from "fast-glob";
 
@@ -46,6 +49,51 @@ function getArchiveRootPath(rootPath: string): string {
 function isPathInsideRoot(targetPath: string, rootPath: string): boolean {
   const relativePath = path.relative(rootPath, targetPath);
   return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
+function getFileDate(filePath: string, fallbackMs: number): string {
+  const dateMatch = path.basename(filePath).match(/(\d{4}-\d{2}-\d{2})/);
+  return dateMatch?.[1] ?? new Date(fallbackMs).toISOString().slice(0, 10);
+}
+
+async function compressFileToGzip(filePath: string, archiveTarget: string): Promise<void> {
+  await fs.mkdir(path.dirname(archiveTarget), { recursive: true });
+  const temporaryPath = `${archiveTarget}.tmp-${process.pid}-${Date.now()}`;
+  const fileStat = await fs.stat(filePath);
+
+  try {
+    await pipeline(createReadStream(filePath), createGzip({ level: 9 }), createWriteStream(temporaryPath));
+    await fs.utimes(temporaryPath, fileStat.atime, fileStat.mtime).catch(() => undefined);
+    await fs.rename(temporaryPath, archiveTarget);
+    await fs.rm(filePath, { force: true });
+  } catch (error) {
+    await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function removeEmptyDirectoriesUpward(startPath: string, stopPath: string): Promise<void> {
+  const stopPathResolved = path.resolve(stopPath);
+  let currentPath = path.resolve(startPath);
+
+  while (isPathInsideRoot(currentPath, stopPathResolved)) {
+    try {
+      const entries = await fs.readdir(currentPath);
+      if (entries.length > 0) {
+        return;
+      }
+
+      await fs.rmdir(currentPath);
+    } catch {
+      return;
+    }
+
+    if (currentPath === stopPathResolved) {
+      return;
+    }
+
+    currentPath = path.dirname(currentPath);
+  }
 }
 
 export class AnalyticsIndexer {
@@ -145,14 +193,14 @@ export class AnalyticsIndexer {
 
     for (const source of selectedSources) {
       const matchedFiles = await this.getMatchedFiles(source.rootPath, source.include);
+      const archiveRootPath = getArchiveRootPath(source.rootPath);
       let archivedFiles = 0;
       let deletedFiles = 0;
       let skippedFiles = 0;
 
       for (const filePath of matchedFiles) {
         const fileStat = await fs.stat(filePath);
-        const dateMatch = path.basename(filePath).match(/(\d{4}-\d{2}-\d{2})/);
-        const fileDate = dateMatch?.[1] ?? new Date(fileStat.mtimeMs).toISOString().slice(0, 10);
+        const fileDate = getFileDate(filePath, fileStat.mtimeMs);
 
         const isToday = fileDate >= todayIso;
         const isBeforeCutoff = mode === "full_clear" ? true : fileDate <= beforeIso;
@@ -165,9 +213,8 @@ export class AnalyticsIndexer {
 
         if (mode === "archive") {
           const relativePath = path.relative(source.rootPath, filePath);
-          const archiveTarget = path.join(source.rootPath, archiveRoot, archiveStamp, relativePath);
-          await fs.mkdir(path.dirname(archiveTarget), { recursive: true });
-          await fs.rename(filePath, archiveTarget);
+          const archiveTarget = path.join(source.rootPath, archiveRoot, archiveStamp, `${relativePath}.gz`);
+          await compressFileToGzip(filePath, archiveTarget);
           archivedFiles += 1;
           result.files.push({
             sourceId: source.id,
@@ -190,18 +237,17 @@ export class AnalyticsIndexer {
         });
       }
 
-      if (mode === "full_clear") {
-        const archiveRootPath = getArchiveRootPath(source.rootPath);
+      if ((mode === "delete" || mode === "full_clear") && isPathInsideRoot(archiveRootPath, source.rootPath)) {
+        try {
+          await fs.access(archiveRootPath);
+          const archivedEntries = await fg("**/*", {
+            cwd: archiveRootPath,
+            absolute: true,
+            onlyFiles: true,
+            suppressErrors: true,
+          });
 
-        if (isPathInsideRoot(archiveRootPath, source.rootPath)) {
-          try {
-            await fs.access(archiveRootPath);
-            const archivedEntries = await fg("**/*", {
-              cwd: archiveRootPath,
-              absolute: true,
-              onlyFiles: true,
-              suppressErrors: true,
-            });
+          if (mode === "full_clear") {
             deletedFiles += archivedEntries.length;
             result.files.push(
               ...archivedEntries.map((filePath) => ({
@@ -213,9 +259,32 @@ export class AnalyticsIndexer {
               })),
             );
             await fs.rm(archiveRootPath, { recursive: true, force: true });
-          } catch {
-            // Ignore missing archive root during full cleanup.
+          } else {
+            for (const archiveFilePath of archivedEntries) {
+              const archiveStat = await fs.stat(archiveFilePath);
+              const fileDate = getFileDate(archiveFilePath, archiveStat.mtimeMs);
+              const isToday = fileDate >= todayIso;
+              const isBeforeCutoff = fileDate <= beforeIso;
+
+              if (!isBeforeCutoff || isToday) {
+                skippedFiles += 1;
+                continue;
+              }
+
+              await fs.rm(archiveFilePath, { force: true });
+              await removeEmptyDirectoriesUpward(path.dirname(archiveFilePath), archiveRootPath);
+              deletedFiles += 1;
+              result.files.push({
+                sourceId: source.id,
+                sourceName: source.name,
+                filePath: archiveFilePath,
+                action: "deleted",
+                destinationPath: null,
+              });
+            }
           }
+        } catch {
+          // Ignore missing archive root during cleanup.
         }
       }
 
