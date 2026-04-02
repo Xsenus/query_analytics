@@ -44,6 +44,10 @@ async function writeOldFile(filePath: string, content = ""): Promise<void> {
   await fs.utimes(filePath, oldDate, oldDate);
 }
 
+function normalizeForAssert(filePath: string | null | undefined): string | null {
+  return filePath ? path.normalize(filePath) : null;
+}
+
 describe("history cleanup", () => {
   it("archives only eligible old files", async () => {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "query-analytics-cleanup-archive-"));
@@ -65,6 +69,11 @@ describe("history cleanup", () => {
       expect(result.archivedFiles).toBe(1);
       expect(result.deletedFiles).toBe(0);
       expect(result.skippedFiles).toBe(1);
+      expect(result.files).toHaveLength(1);
+      expect(result.files[0]?.action).toBe("archived");
+      expect(normalizeForAssert(result.files[0]?.filePath)).toBe(path.normalize(oldFile));
+      expect(normalizeForAssert(result.files[0]?.destinationPath)).toContain(path.normalize(path.join(".query-analytics-archive")));
+      expect(normalizeForAssert(result.files[0]?.destinationPath)).toContain("http-requests-2000-01-01.jsonl");
       await expect(fs.access(oldFile)).rejects.toThrow();
       await expect(fs.access(todayFile)).resolves.toBeUndefined();
       expect(archivedFiles.some((item) => String(item).endsWith("http-requests-2000-01-01.jsonl"))).toBe(true);
@@ -88,6 +97,16 @@ describe("history cleanup", () => {
       expect(result.archivedFiles).toBe(0);
       expect(result.deletedFiles).toBe(1);
       expect(result.affectedFiles).toBe(1);
+      expect(result.files).toEqual([
+        {
+          sourceId: "test-source",
+          sourceName: "Test source",
+          filePath: result.files[0]?.filePath,
+          action: "deleted",
+          destinationPath: null,
+        },
+      ]);
+      expect(normalizeForAssert(result.files[0]?.filePath)).toBe(path.normalize(oldFile));
       await expect(fs.access(oldFile)).rejects.toThrow();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
@@ -112,6 +131,20 @@ describe("history cleanup", () => {
       expect(result.mode).toBe("full_clear");
       expect(result.deletedFiles).toBe(2);
       expect(result.affectedFiles).toBe(2);
+      expect(result.files).toHaveLength(2);
+      expect(
+        result.files.some(
+          (item) => normalizeForAssert(item.filePath) === path.normalize(oldFile) && item.action === "deleted" && item.destinationPath === null,
+        ),
+      ).toBe(true);
+      expect(
+        result.files.some(
+          (item) =>
+            normalizeForAssert(item.filePath) === path.normalize(archivedFile) &&
+            item.action === "deleted" &&
+            item.destinationPath === null,
+        ),
+      ).toBe(true);
       await expect(fs.access(oldFile)).rejects.toThrow();
       await expect(fs.access(path.join(tempDir, ".query-analytics-archive"))).rejects.toThrow();
       await expect(fs.access(todayFile)).resolves.toBeUndefined();

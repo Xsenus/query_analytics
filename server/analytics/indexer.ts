@@ -139,6 +139,7 @@ export class AnalyticsIndexer {
       skippedFiles: 0,
       completedAt: new Date().toISOString(),
       archiveRoot: mode === "archive" ? archiveRoot : null,
+      files: [],
       sources: [],
     };
 
@@ -168,11 +169,25 @@ export class AnalyticsIndexer {
           await fs.mkdir(path.dirname(archiveTarget), { recursive: true });
           await fs.rename(filePath, archiveTarget);
           archivedFiles += 1;
+          result.files.push({
+            sourceId: source.id,
+            sourceName: source.name,
+            filePath,
+            action: "archived",
+            destinationPath: archiveTarget,
+          });
           continue;
         }
 
         await fs.rm(filePath, { force: true });
         deletedFiles += 1;
+        result.files.push({
+          sourceId: source.id,
+          sourceName: source.name,
+          filePath,
+          action: "deleted",
+          destinationPath: null,
+        });
       }
 
       if (mode === "full_clear") {
@@ -181,12 +196,22 @@ export class AnalyticsIndexer {
         if (isPathInsideRoot(archiveRootPath, source.rootPath)) {
           try {
             await fs.access(archiveRootPath);
-            const archivedFiles = await fg("**/*", {
+            const archivedEntries = await fg("**/*", {
               cwd: archiveRootPath,
+              absolute: true,
               onlyFiles: true,
               suppressErrors: true,
             });
-            deletedFiles += archivedFiles.length;
+            deletedFiles += archivedEntries.length;
+            result.files.push(
+              ...archivedEntries.map((filePath) => ({
+                sourceId: source.id,
+                sourceName: source.name,
+                filePath,
+                action: "deleted" as const,
+                destinationPath: null,
+              })),
+            );
             await fs.rm(archiveRootPath, { recursive: true, force: true });
           } catch {
             // Ignore missing archive root during full cleanup.

@@ -174,6 +174,13 @@ export interface HistoryCleanupResult {
   skippedFiles: number;
   completedAt: string;
   archiveRoot: string | null;
+  files: Array<{
+    sourceId: string;
+    sourceName: string;
+    filePath: string;
+    action: "archived" | "deleted";
+    destinationPath: string | null;
+  }>;
   sources: Array<{
     id: string;
     name: string;

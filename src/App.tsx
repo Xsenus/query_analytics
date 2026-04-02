@@ -16,7 +16,7 @@ import {
 } from "recharts";
 
 import { cleanupHistory, fetchDashboard, fetchRequestDetails, updateSourceLogging } from "./api";
-import type { DashboardPayload, HistoryCleanupMode, RequestDetailsPayload } from "./types";
+import type { DashboardPayload, HistoryCleanupMode, HistoryCleanupResult, RequestDetailsPayload } from "./types";
 
 type RangePreset = "24h" | "7d" | "30d" | "90d";
 type RecentRequest = DashboardPayload["tables"]["recentRequests"]["items"][number];
@@ -24,6 +24,7 @@ type SourceActivityItem = DashboardPayload["tables"]["sourceActivity"][number];
 
 const numberFormat = new Intl.NumberFormat("ru-RU");
 const presetLabels: Record<RangePreset, string> = { "24h": "24 часа", "7d": "7 дней", "30d": "30 дней", "90d": "90 дней" };
+const presetDays: Record<RangePreset, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90 };
 const resultLabels: Record<string, string> = { positive: "Успешно", negative: "С ошибкой", unknown: "Не определено", total: "Всего" };
 const outcomeLabels: Record<string, string> = {
   success: "Успешно",
@@ -54,14 +55,36 @@ function toInputValue(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+function setDayBoundary(date: Date, boundary: "start" | "end"): Date {
+  const nextDate = new Date(date);
+
+  if (boundary === "start") {
+    nextDate.setHours(0, 0, 0, 0);
+    return nextDate;
+  }
+
+  nextDate.setHours(23, 59, 59, 0);
+  return nextDate;
+}
+
+function normalizeRangeValue(value: string, boundary: "start" | "end"): string {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    return value;
+  }
+
+  return toInputValue(setDayBoundary(date, boundary));
+}
+
 function presetToRange(preset: RangePreset): { from: string; to: string } {
-  const now = new Date();
-  const from = new Date(now);
-  if (preset === "24h") from.setHours(from.getHours() - 24);
-  if (preset === "7d") from.setDate(from.getDate() - 7);
-  if (preset === "30d") from.setDate(from.getDate() - 30);
-  if (preset === "90d") from.setDate(from.getDate() - 90);
-  return { from: toInputValue(from), to: toInputValue(now) };
+  const to = setDayBoundary(new Date(), "end");
+  const from = setDayBoundary(to, "start");
+  from.setDate(from.getDate() - (presetDays[preset] - 1));
+  return { from: toInputValue(from), to: toInputValue(to) };
 }
 
 function formatNumber(value: number | null): string {
@@ -227,6 +250,14 @@ function getCleanupModeDescription(mode: HistoryCleanupMode, beforeLabel: string
   return "Удалит все старые log-файлы выбранных источников и очистит архив. Текущий день и недавно изменённые файлы будут пропущены.";
 }
 
+function getCleanupActionLabel(action: HistoryCleanupResult["files"][number]["action"]): string {
+  return action === "archived" ? "Архивирован" : "Удалён";
+}
+
+function getCleanupActionTone(action: HistoryCleanupResult["files"][number]["action"]): string {
+  return action === "archived" ? "is-positive" : "is-negative";
+}
+
 function getLogControlLabel(enabled: boolean | null): string {
   if (enabled === true) return "Логи включены";
   if (enabled === false) return "Логи выключены";
@@ -290,8 +321,8 @@ function EmptyState(props: { text: string }) {
 }
 
 export default function App() {
-  const [preset, setPreset] = useState<RangePreset | "custom">("30d");
-  const [range, setRange] = useState(() => presetToRange("30d"));
+  const [preset, setPreset] = useState<RangePreset | "custom">("24h");
+  const [range, setRange] = useState(() => presetToRange("24h"));
   const [source, setSource] = useState("all");
   const [provider, setProvider] = useState("all");
   const [result, setResult] = useState("all");
@@ -312,6 +343,7 @@ export default function App() {
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [cleanupMode, setCleanupMode] = useState<HistoryCleanupMode>("archive");
   const [archiveMessage, setArchiveMessage] = useState<string | null>(null);
+  const [cleanupResult, setCleanupResult] = useState<HistoryCleanupResult | null>(null);
   const [controlMessage, setControlMessage] = useState<string | null>(null);
   const [sourceControlBusy, setSourceControlBusy] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -408,7 +440,7 @@ export default function App() {
 
   function handleRangeChange(key: "from" | "to", value: string) {
     setPreset("custom");
-    setRange((current) => ({ ...current, [key]: value }));
+    setRange((current) => ({ ...current, [key]: normalizeRangeValue(value, key === "from" ? "start" : "end") }));
   }
 
   function openRequestModal(request: RecentRequest) {
@@ -431,6 +463,7 @@ export default function App() {
         `${modeLabel}: обработано ${payload.affectedFiles}, архивировано ${payload.archivedFiles}, удалено ${payload.deletedFiles}, пропущено ${payload.skippedFiles}. ` +
           `Текущие и недавно изменённые файлы не затрагиваются.`,
       );
+      setCleanupResult(payload);
       setArchiveModalOpen(false);
       setRecentPage(1);
       setRefreshTick((value) => value + 1);
@@ -536,6 +569,10 @@ export default function App() {
           </div>
 
           <div className="toolbar-actions">
+            <label className="toggle toggle-inline">
+              <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
+              <span>Автообновление</span>
+            </label>
             <button type="button" className="secondary-button" onClick={() => setRefreshTick((value) => value + 1)}>
               Обновить сейчас
             </button>
@@ -611,15 +648,39 @@ export default function App() {
               onChange={(event) => setSearch(event.target.value)}
             />
           </label>
-
-          <label className="toggle">
-            <input type="checkbox" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
-            <span>Автообновление</span>
-          </label>
         </div>
 
         <div className="info-row">
-          {archiveMessage ? <div className="info-banner">{archiveMessage}</div> : null}
+          {archiveMessage ? (
+            <div className="info-banner cleanup-banner">
+              <p className="cleanup-banner-summary">{archiveMessage}</p>
+              {cleanupResult ? (
+                cleanupResult.files.length > 0 ? (
+                  <div className="cleanup-files-list">
+                    {cleanupResult.files.map((item) => (
+                      <article
+                        key={`${item.action}:${item.filePath}:${item.destinationPath ?? "none"}`}
+                        className="cleanup-file-item"
+                      >
+                        <div className="cleanup-file-head">
+                          <span className={`pill ${getCleanupActionTone(item.action)}`}>{getCleanupActionLabel(item.action)}</span>
+                          <strong>{item.sourceName}</strong>
+                        </div>
+                        <code className="cleanup-file-path">{item.filePath}</code>
+                        <span className="cleanup-file-note">
+                          {item.action === "archived" && item.destinationPath
+                            ? `Перемещён в ${item.destinationPath}`
+                            : "Удалён без архива"}
+                        </span>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="cleanup-banner-empty">Подходящих файлов для обработки не нашлось.</p>
+                )
+              ) : null}
+            </div>
+          ) : null}
           {controlMessage ? <div className="info-banner">{controlMessage}</div> : null}
           {error ? <div className="error-banner">{error}</div> : null}
         </div>

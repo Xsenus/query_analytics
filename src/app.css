@@ -138,6 +138,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  align-items: center;
 }
 
 .preset-group {
@@ -268,12 +269,16 @@ button {
 .toggle {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
-  align-self: start;
-  padding: 12px 14px;
+  padding: 11px 14px;
   border-radius: 16px;
   background: rgba(236, 254, 255, 0.72);
   border: 1px solid rgba(13, 148, 136, 0.14);
+}
+
+.toggle-inline {
+  white-space: nowrap;
 }
 
 .toggle input {
@@ -305,6 +310,56 @@ button {
   color: #0f766e;
 }
 
+.cleanup-banner {
+  display: grid;
+  gap: 14px;
+}
+
+.cleanup-banner-summary,
+.cleanup-banner-empty {
+  margin: 0;
+}
+
+.cleanup-files-list {
+  display: grid;
+  gap: 10px;
+  max-height: 280px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.cleanup-file-item {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(13, 148, 136, 0.14);
+}
+
+.cleanup-file-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cleanup-file-path {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: #102a43;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cleanup-file-note {
+  color: #486581;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
 .error-banner {
   background: rgba(248, 113, 113, 0.12);
   color: #991b1b;
@@ -323,12 +378,15 @@ button {
   min-height: 150px;
   display: grid;
   gap: 10px;
-  align-content: start;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
 }
 
 .metric-label {
   font-size: 0.875rem;
   color: #486581;
+  width: 100%;
 }
 
 .metric-value {
@@ -338,6 +396,8 @@ button {
   display: grid;
   gap: 6px;
   min-width: 0;
+  justify-items: center;
+  text-align: center;
 }
 
 .metric-value.is-compact {
@@ -348,11 +408,18 @@ button {
   display: block;
   min-width: 0;
   overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .metric-value-time {
   font-size: 1.15rem;
   color: #486581;
+}
+
+.metric-note {
+  width: 100%;
+  margin: 0;
+  text-align: center;
 }
 
 .layout-grid {
